@@ -1,25 +1,24 @@
 // src/lib/firebase.ts
 import { initializeApp, getApps, getApp } from 'firebase/app'
-import {
-  getAuth,
-  browserLocalPersistence,
-  setPersistence,
-} from 'firebase/auth'
+import { getAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 
-// 🔑  pegue esses valores no console do Firebase (print que enviou)
+// Carrega da .env.local (lado cliente precisa do prefixo NEXT_PUBLIC_)
 const firebaseConfig = {
-  apiKey:            'AIzaSyBbnRq4kovi-j-g52FOc6WqSvLpQ1IT3Cg',      // ← copie
-  authDomain:        'sortex-dashboard.firebaseapp.com',
-  projectId:         'sortex-dashboard',
-  storageBucket:     'sortex-dashboard.appspot.com',
-  messagingSenderId: '13099651551',
-  appId:             '1:130996561551:web:154762b9032966f486f2fa', // ← copie
+  apiKey:            process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
+  authDomain:        process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,
+  projectId:         process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
+  storageBucket:     process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET!,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID!,
+  appId:             process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 }
 
-const app   = !getApps().length ? initializeApp(firebaseConfig) : getApp()
-export const db   = getFirestore(app)
-export const auth = getAuth(app)
+if (process.env.NODE_ENV !== 'production') {
+  for (const [k, v] of Object.entries(firebaseConfig)) {
+    if (!v) console.warn(`[firebase] Variável de ambiente ausente: ${k}`)
+  }
+}
 
-//  garante que ele use localStorage (mantém login após refresh)
-setPersistence(auth, browserLocalPersistence)
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig)
+export const db = getFirestore(app)
+export const auth = getAuth(app)

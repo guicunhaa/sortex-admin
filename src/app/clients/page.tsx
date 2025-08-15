@@ -10,8 +10,16 @@ import { addDoc, collection, doc, getDocs, limit, orderBy, query, setDoc, startA
 import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth'
 import Label from '@/components/ui/form/Label'
 import Input from '@/components/ui/form/Input'
+import Select from '@/components/ui/form/Select'
+import { REGIONS, regionLabel } from '@/lib/regions'
 
-type Client = { id: string; name: string; email?: string; phone?: string; cpf?: string; vendorId: string; createdAt?: any }
+// Padroniza opções de região a partir de REGIONS (mantemos consistência com dashboard)
+const REGION_OPTIONS = (Array.isArray(REGIONS) ? REGIONS : []).map((r: any) => ({
+  value: r.code ?? r.value ?? r,
+  label: r.label ?? r.name ?? String(r),
+}))
+
+type Client = { id: string; name: string; email?: string; phone?: string; cpf?: string; region?: string; vendorId: string; createdAt?: any }
 
 export default function ClientsPage() {
   const { user } = useAuth()
@@ -71,14 +79,17 @@ export default function ClientsPage() {
 
   async function saveClient(form: Partial<Client>) {
     if (!user) return
+    // região obrigatória
+    if (!form.region) return
+
     if (editing) {
       await updateDoc(doc(db,'clients', editing.id), {
-        name: form.name, email: form.email || null, phone: form.phone || null, cpf: form.cpf || null, updatedAt: new Date()
+        name: form.name, email: form.email || null, phone: form.phone || null, cpf: form.cpf || null, region: form.region || null, updatedAt: new Date()
       } as any)
       setList(s => s.map(x => x.id===editing.id ? { ...x, ...form } as Client : x))
     } else {
       const payload = {
-        name: form.name, email: form.email || null, phone: form.phone || null, cpf: form.cpf || null,
+        name: form.name, email: form.email || null, phone: form.phone || null, cpf: form.cpf || null, region: form.region || null,
         vendorId: myVendorId, createdAt: new Date()
       }
       const ref = await addDoc(collection(db,'clients'), payload as any)
@@ -144,19 +155,21 @@ export default function ClientsPage() {
                 <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Email</th>
                 <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Telefone</th>
                 <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">CPF</th>
+                <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Região</th>
                 <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Vendedor</th>
                 <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Ações</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="px-4 py-6 text-muted">Carregando…</td></tr>
+                <tr><td colSpan={7} className="px-4 py-6 text-muted">Carregando…</td></tr>
               ) : list.map(c => (
                 <tr key={c.id} className="border-t border-border hover:bg-surface">
                   <td className="px-4 py-3">{c.name}</td>
                   <td className="px-4 py-3">{c.email || '-'}</td>
                   <td className="px-4 py-3">{c.phone || '-'}</td>
                   <td className="px-4 py-3">{c.cpf || '-'}</td>
+                  <td className="px-4 py-3">{c.region ? regionLabel(c.region) : '-'}</td>
                   <td className="px-4 py-3">{c.vendorId}</td>
                   <td className="px-4 py-3 text-center">
                     <div className="flex items-center justify-center gap-2">
@@ -212,7 +225,10 @@ function ClientEditModal({ open, onClose, initial, onSave }:{
   const [email,setEmail]=useState(initial?.email||'')
   const [phone,setPhone]=useState(initial?.phone||'')
   const [cpf,setCpf]=useState(initial?.cpf||'')
-  useEffect(()=>{ setName(initial?.name||''); setEmail(initial?.email||''); setPhone(initial?.phone||''); setCpf(initial?.cpf||'') },[initial,open])
+  const [region,setRegion]=useState(initial?.region||'')
+  useEffect(()=>{ setName(initial?.name||''); setEmail(initial?.email||''); setPhone(initial?.phone||''); setCpf(initial?.cpf||''); setRegion(initial?.region||'') },[initial,open])
+
+  const canSave = Boolean(name.trim()) && Boolean(region)
 
   return (
     <Modal open={open} onClose={onClose} title={initial?'Editar cliente':'Novo cliente'}>
@@ -233,11 +249,21 @@ function ClientEditModal({ open, onClose, initial, onSave }:{
           <Label>CPF (opcional)</Label>
           <Input value={cpf} onChange={e=>setCpf(e.target.value)} placeholder="CPF (opcional)" />
         </div>
+        <div>
+          <Label>Região</Label>
+          <Select value={region} onChange={e=>setRegion(e.target.value)} aria-label="Selecionar região" required>
+            <option value="">Selecione a região</option>
+            {REGION_OPTIONS.map(o => (
+              <option key={String(o.value)} value={String(o.value)}>{o.label}</option>
+            ))}
+          </Select>
+          {!region && <p className="text-xs text-warning/80 mt-1">Selecione a região (obrigatório).</p>}
+        </div>
 
         <div className="pt-2 flex items-center justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 rounded border border-border bg-surface hover:brightness-110 text-foreground">Cancelar</button>
-          <button onClick={()=>onSave({ name, email, phone, cpf })}
-            className="px-4 py-2 rounded border border-border bg-surface hover:brightness-110 text-foreground">
+          <button onClick={()=>onSave({ name, email, phone, cpf, region })} disabled={!canSave}
+            className="px-4 py-2 rounded border border-border bg-surface hover:brightness-110 text-foreground disabled:opacity-50">
             Salvar
           </button>
         </div>

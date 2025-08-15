@@ -11,15 +11,18 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import Sidebar from '@/components/layout/Sidebar'
 import { useRole } from '@/hooks/useRole'
 import Label from '@/components/ui/form/Label'
-import Input from '@/components/ui/form/Input'
 import Select from '@/components/ui/form/Select'
 import ThemeToggle from '@/components/ui/ThemeToggle'
+import { REGIONS } from '@/lib/regions'
 
 type Sale = {
-  id:string; vendorName:string; vendorId:string; region:string; product:string;
+  id:string; vendorName:string; vendorId:string; region:string; groupId:string; number:string;
   quantity:number; total:number; status:'pago'|'pendente'; date:Date
 }
+
 type Filters = { vendor?:string; region?:string; status?:'pago'|'pendente'|'' }
+
+type VendorOpt = { id:string; name:string }
 
 const PAGE_SIZE=20
 const CURRENCY=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'})
@@ -32,7 +35,8 @@ function toSale(d:DocumentData):Sale{
     vendorName:d.get('vendorName')??'',
     vendorId:d.get('vendorId')??'',
     region:d.get('region')??'',
-    product:d.get('product')??'',
+    groupId:d.get('groupId')??'',
+    number:String(d.get('number')??''),
     quantity:Number(d.get('quantity')??0),
     total:Number(d.get('total')??0),
     status:d.get('status')??'pendente',
@@ -55,15 +59,30 @@ export default function DashboardPage(){
   const [openModal,setOpenModal]=useState(false)
   const [showTotal,setShowTotal]=useState(true)
 
+  const [vendors,setVendors]=useState<VendorOpt[]>([])
+
+  // carregar opções de vendedores
+  useEffect(()=>{(async()=>{
+    if(!user) return
+    const snap = await getDocs(query(collection(db,'vendors'), orderBy('name','asc')))
+    const list = snap.docs.map(d=>({ id:d.id, name:(d.data() as any).name ?? d.id }))
+    setVendors(list)
+  })()},[user?.uid])
+
   // carrega primeira página ao mudar filtros ou quando criar venda
   useEffect(()=>{ let alive=true;(async()=>{
     setLoadingPage(true)
     const col=collection(db,'sales')
     const clauses:any[]=[orderBy('date','desc'),limit(PAGE_SIZE)]
+
+    // Segurança: se não for admin, limita ao próprio vendedor sempre
     if (role !== 'admin' && user?.uid) clauses.unshift(where('vendorId','==', user.uid))
+
+    // Filtros (admin pode aplicar qualquer um)
     if(filters.vendor) clauses.unshift(where('vendorId','==',filters.vendor))
     if(filters.region) clauses.unshift(where('region','==',filters.region))
     if(filters.status) clauses.unshift(where('status','==',filters.status))
+
     const snap=await getDocs(query(col,...clauses))
     if(!alive) return
     const docs=snap.docs
@@ -71,17 +90,19 @@ export default function DashboardPage(){
     setCursor(docs.length?docs[docs.length-1]:undefined)
     setHasMore(docs.length===PAGE_SIZE)
     setLoadingPage(false)
-  })();return()=>{alive=false}} ,[filters.vendor,filters.region,filters.status,refreshTick])
+  })();return()=>{alive=false}} ,[filters.vendor,filters.region,filters.status,refreshTick, role, user?.uid])
 
   async function loadMore(){
     if(!cursor) return
     setLoadingPage(true)
     const col=collection(db,'sales')
     const clauses:any[]=[orderBy('date','desc'),startAfter(cursor),limit(PAGE_SIZE)]
+
     if (role !== 'admin' && user?.uid) clauses.unshift(where('vendorId','==', user.uid))
     if(filters.vendor) clauses.unshift(where('vendorId','==',filters.vendor))
     if(filters.region) clauses.unshift(where('region','==',filters.region))
     if(filters.status) clauses.unshift(where('status','==',filters.status))
+
     const snap=await getDocs(query(col,...clauses))
     const docs=snap.docs
     setSales(prev=>[...prev,...docs.map(toSale)])
@@ -109,6 +130,9 @@ export default function DashboardPage(){
     for(const s of sales){byVendor.set(s.vendorName,(byVendor.get(s.vendorName)??0)+s.total)}
     return Array.from(byVendor,([name,total])=>({name,total})).sort((a,b)=>b.total-a.total).slice(0,6)
   },[sales])
+
+  // opções de região a partir do arquivo de regiões
+  const regionOptions = (Array.isArray(REGIONS) ? REGIONS : []).map((r:any)=>({ value: r.code ?? r.value ?? r, label: r.label ?? r.name ?? String(r) }))
 
   return (
     <div className="min-h-screen">
@@ -144,14 +168,24 @@ export default function DashboardPage(){
           <GlassCard className="px-4 py-3">
             <div className="flex flex-col md:flex-row md:items-end gap-3">
               <div className="flex-1">
-                <Label>Vendedor (vendorId)</Label>
-                <Input placeholder="uid do vendedor" value={filters.vendor??''}
-                  onChange={e=>setFilters(f=>({...f,vendor:e.target.value||undefined}))}/>
+                <Label>Vendedor</Label>
+                <Select value={filters.vendor??''}
+                  onChange={e=>setFilters(f=>({...f,vendor:e.target.value||undefined}))}>
+                  <option value="">{role==='admin'?'Todos':'Meu usuário'}</option>
+                  {vendors.map(v => (
+                    <option key={v.id} value={v.id}>{v.name} ({v.id})</option>
+                  ))}
+                </Select>
               </div>
               <div className="flex-1">
                 <Label>Região</Label>
-                <Input placeholder="ex.: NH, SL" value={filters.region??''}
-                  onChange={e=>setFilters(f=>({...f,region:e.target.value||undefined}))}/>
+                <Select value={filters.region??''}
+                  onChange={e=>setFilters(f=>({...f,region:e.target.value||undefined}))}>
+                  <option value="">Todas</option>
+                  {regionOptions.map((r:any)=> (
+                    <option key={String(r.value)} value={String(r.value)}>{r.label} ({String(r.value)})</option>
+                  ))}
+                </Select>
               </div>
               <div className="w-full md:w-48">
                 <Label>Status</Label>
@@ -227,13 +261,14 @@ export default function DashboardPage(){
             <div className="px-4 py-3 text-muted text-sm">Vendas</div>
             <div className="divider"/>
             <div className="overflow-auto" aria-busy={loadingPage}>
-              <table className="min-w-[960px] w-full text-sm border-collapse">
+              <table className="min-w-[1040px] w-full text-sm border-collapse">
                 <caption className="sr-only">Tabela de vendas com filtros e paginação</caption>
                 <thead className="bg-surface backdrop-blur supports-[backdrop-filter]:bg-surface/90 sticky top-0 z-10">
                   <tr>
                     <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Data</th>
                     <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Vendedor</th>
-                    <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Produto</th>
+                    <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Número</th>
+                    <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Grupo</th>
                     <th scope="col" className="text-right font-medium text-muted px-4 py-3 border-b border-border">Qtd</th>
                     <th scope="col" className="text-right font-medium text-muted px-4 py-3 border-b border-border">Total</th>
                     <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Região</th>
@@ -244,7 +279,7 @@ export default function DashboardPage(){
                   {/* Skeleton inicial */}
                   {loadingPage && sales.length===0 && Array.from({length:6}).map((_,i)=>(
                     <tr key={i} className="border-t border-border animate-pulse">
-                      {Array.from({length:7}).map((__,j)=>(
+                      {Array.from({length:8}).map((__,j)=>(
                         <td key={j} className="px-4 py-3">
                           <div className="h-4 bg-surface rounded w-24" />
                         </td>
@@ -257,7 +292,8 @@ export default function DashboardPage(){
                     <tr key={s.id} className="border-t border-border hover:bg-surface">
                       <td className="px-4 py-3">{DATE.format(s.date)}</td>
                       <td className="px-4 py-3">{s.vendorName}</td>
-                      <td className="px-4 py-3">{s.product}</td>
+                      <td className="px-4 py-3">{s.number}</td>
+                      <td className="px-4 py-3">{s.groupId}</td>
                       <td className="px-4 py-3 text-right">{s.quantity}</td>
                       <td className="px-4 py-3 text-right">{CURRENCY.format(s.total)}</td>
                       <td className="px-4 py-3">{s.region}</td>
@@ -278,7 +314,7 @@ export default function DashboardPage(){
 
                   {/* Empty state */}
                   {sales.length===0 && !loadingPage && (
-                    <tr><td colSpan={7} className="px-4 py-10 text-center text-muted">Nenhum registro com esses filtros.</td></tr>
+                    <tr><td colSpan={8} className="px-4 py-10 text-center text-muted">Nenhum registro com esses filtros.</td></tr>
                   )}
                 </tbody>
               </table>

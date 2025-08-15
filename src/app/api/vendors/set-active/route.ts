@@ -13,14 +13,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'not_admin' }, { status: 403 })
   }
 
-  const { vendorId, active } = await req.json()
-  if (!vendorId || typeof active !== 'boolean') {
+  const { vendorId, active, canCreateGroups } = await req.json().catch(() => ({}))
+  if (!vendorId || typeof active !== 'boolean' && typeof canCreateGroups !== 'boolean') {
     return NextResponse.json({ error: 'missing params' }, { status: 400 })
   }
 
-  await adminDb.collection('vendors').doc(vendorId).set(
-    { userId: vendorId, active, updatedAt: new Date() },
-    { merge: true }
-  )
+  const payload: any = { userId: vendorId, updatedAt: new Date() }
+  if (typeof active === 'boolean') payload.active = active
+  if (typeof canCreateGroups === 'boolean') payload.canCreateGroups = canCreateGroups
+
+  await adminDb.collection('vendors').doc(vendorId).set(payload, { merge: true })
   return NextResponse.json({ ok: true })
 }
