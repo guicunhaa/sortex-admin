@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useLayoutEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { auth } from '@/lib/firebase'
+import { createPortal } from 'react-dom'
 
 type VendorRow = {
   id: string
@@ -19,6 +20,59 @@ type VendorStats = {
   participating: { id: string; label: string | null }[]
 }
 
+function PopoverPortal({
+  open, anchor, onClose, children, width = 448,
+}: {
+  open: boolean
+  anchor: HTMLElement | null
+  onClose: () => void
+  children: React.ReactNode
+  width?: number
+}) {
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
+
+  useLayoutEffect(() => {
+    if (!open || !anchor) return
+    const r = anchor.getBoundingClientRect()
+    const margin = 8
+    const left = Math.min(
+      Math.max(margin, r.right - width),
+      window.innerWidth - width - margin
+    )
+    const top = Math.min(r.bottom + margin, window.innerHeight - margin)
+    setPos({ top, left })
+  }, [open, anchor, width])
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const onClick = (e: MouseEvent) => {
+      if (anchor && (e.target as Node) && !anchor.contains(e.target as Node)) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('click', onClick)
+    window.addEventListener('resize', onClose)
+    window.addEventListener('scroll', onClose, true)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('click', onClick)
+      window.removeEventListener('resize', onClose)
+      window.removeEventListener('scroll', onClose, true)
+    }
+  }, [open, anchor, onClose])
+
+  if (!open) return null
+  return createPortal(
+    <div
+      style={{ position: 'fixed', top: pos.top, left: pos.left, width }}
+      className="z-[10000] rounded-2xl border border-border bg-background p-4 shadow-2xl ring-1 ring-black/10 dark:ring-white/10"
+    >
+      {children}
+    </div>,
+    document.body
+  )
+}
+
 export default function VendorsPage() {
   const { user } = useAuth()
   const [loading, setLoading] = useState(false)
@@ -29,6 +83,7 @@ export default function VendorsPage() {
   const [openInfo, setOpenInfo] = useState<string | null>(null) // vendorId aberto
   const [loadingInfo, setLoadingInfo] = useState(false)
   const [stats, setStats] = useState<Record<string, VendorStats>>({})
+  const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
 
   async function fetchVendors() {
     setLoading(true)
@@ -142,70 +197,72 @@ export default function VendorsPage() {
                   <td className="py-2 pl-2 pr-2 relative">
                     <div className="flex justify-end">
                       <button
+                        ref={el => { btnRefs.current[v.userId] = el }}
                         onClick={() => toggleInfo(v.userId)}
                         className="px-2 py-1 text-sm rounded-lg border border-border bg-surface hover:brightness-110"
                       >
                         Mais informações
                       </button>
                     </div>
+                  </td>
+                  <PopoverPortal
+                    open={isOpen}
+                    anchor={btnRefs.current[v.userId] || null}
+                    onClose={() => setOpenInfo(null)}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="font-medium">Resumo do vendedor</div>
+                      <button
+                        onClick={() => setOpenInfo(null)}
+                        className="px-2 py-1 text-xs rounded-md hover:bg-muted"
+                        aria-label="Fechar"
+                      >
+                        ×
+                      </button>
+                    </div>
 
-                    {isOpen && (
-                      <div className="absolute right-2 top-full z-20 mt-2 w-[28rem] rounded-lg border border-border bg-surface p-3 shadow-xl">
-                        <div className="flex items-start justify-between">
-                          <div className="font-medium">Resumo do vendedor</div>
-                          <button
-                            onClick={() => setOpenInfo(null)}
-                            className="px-2 py-1 text-xs rounded-md hover:bg-muted"
-                            aria-label="Fechar"
-                          >
-                            ×
-                          </button>
+                    {loadingInfo && <div className="text-sm text-muted-foreground mt-2">Carregando…</div>}
+                    {!loadingInfo && (
+                      <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <div className="font-medium text-xs mb-1">Grupos criados</div>
+                          <ul className="text-xs list-disc list-inside space-y-0.5">
+                            {s?.createdGroups?.length ? (
+                              s.createdGroups.map((g) => (
+                                <li key={g.id}>{g.label || g.id}</li>
+                              ))
+                            ) : (
+                              <li className="text-muted-foreground">Nenhum</li>
+                            )}
+                          </ul>
                         </div>
-
-                        {loadingInfo && <div className="text-sm text-muted-foreground mt-2">Carregando…</div>}
-                        {!loadingInfo && (
-                          <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-3">
-                            <div>
-                              <div className="font-medium text-xs mb-1">Grupos criados</div>
-                              <ul className="text-xs list-disc list-inside space-y-0.5">
-                                {s?.createdGroups?.length ? (
-                                  s.createdGroups.map((g) => (
-                                    <li key={g.id}>{g.label || g.id}</li>
-                                  ))
-                                ) : (
-                                  <li className="text-muted-foreground">Nenhum</li>
-                                )}
-                              </ul>
-                            </div>
-                            <div>
-                              <div className="font-medium text-xs mb-1">Grupos com venda</div>
-                              <ul className="text-xs list-disc list-inside space-y-0.5">
-                                {s?.soldGroups?.length ? (
-                                  s.soldGroups.map((g) => (
-                                    <li key={g.id}>{g.label || g.id}</li>
-                                  ))
-                                ) : (
-                                  <li className="text-muted-foreground">Nenhum</li>
-                                )}
-                              </ul>
-                            </div>
-                            <div>
-                              <div className="font-medium text-xs mb-1">Participa</div>
-                              <ul className="text-xs list-disc list-inside space-y-0.5">
-                                {s?.participating?.length ? (
-                                  s.participating.map((g) => (
-                                    <li key={g.id}>{g.label || g.id}</li>
-                                  ))
-                                ) : (
-                                  <li className="text-muted-foreground">Nenhum</li>
-                                )}
-                              </ul>
-                            </div>
-                          </div>
-                        )}
+                        <div>
+                          <div className="font-medium text-xs mb-1">Grupos com venda</div>
+                          <ul className="text-xs list-disc list-inside space-y-0.5">
+                            {s?.soldGroups?.length ? (
+                              s.soldGroups.map((g) => (
+                                <li key={g.id}>{g.label || g.id}</li>
+                              ))
+                            ) : (
+                              <li className="text-muted-foreground">Nenhum</li>
+                            )}
+                          </ul>
+                        </div>
+                        <div>
+                          <div className="font-medium text-xs mb-1">Participa</div>
+                          <ul className="text-xs list-disc list-inside space-y-0.5">
+                            {s?.participating?.length ? (
+                              s.participating.map((g) => (
+                                <li key={g.id}>{g.label || g.id}</li>
+                              ))
+                            ) : (
+                              <li className="text-muted-foreground">Nenhum</li>
+                            )}
+                          </ul>
+                        </div>
                       </div>
                     )}
-                  </td>
+                  </PopoverPortal>
                 </tr>
               )
             })}
