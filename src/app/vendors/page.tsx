@@ -13,11 +13,22 @@ type VendorRow = {
   updatedAt: number | null
 }
 
+type VendorStats = {
+  createdGroups: { id: string; label: string | null }[]
+  soldGroups: { id: string; label: string | null }[]
+  participating: { id: string; label: string | null }[]
+}
+
 export default function VendorsPage() {
   const { user } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [vendors, setVendors] = useState<VendorRow[]>([])
+
+  // Estado para o popover "Mais informações"
+  const [openInfo, setOpenInfo] = useState<string | null>(null) // vendorId aberto
+  const [loadingInfo, setLoadingInfo] = useState(false)
+  const [stats, setStats] = useState<Record<string, VendorStats>>({})
 
   async function fetchVendors() {
     setLoading(true)
@@ -40,6 +51,46 @@ export default function VendorsPage() {
     }
   }
 
+  async function fetchStats(vendorId: string) {
+    setLoadingInfo(true)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      const res = await fetch(`/api/vendors/stats?vendorId=${encodeURIComponent(vendorId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      })
+      const data = await res.json()
+      if (!res.ok || !data?.ok) throw new Error(data?.error || 'falha_stats')
+      setStats((prev) => ({
+        ...prev,
+        [vendorId]: {
+          createdGroups: data.createdGroups ?? [],
+          soldGroups: data.soldGroups ?? [],
+          participating: data.participating ?? [],
+        },
+      }))
+    } catch (e) {
+      // mostra vazio com mensagem genérica no balão
+      setStats((prev) => ({
+        ...prev,
+        [vendorId]: { createdGroups: [], soldGroups: [], participating: [] },
+      }))
+    } finally {
+      setLoadingInfo(false)
+    }
+  }
+
+  function toggleInfo(vendorId: string) {
+    if (openInfo === vendorId) {
+      setOpenInfo(null)
+      return
+    }
+    setOpenInfo(vendorId)
+    if (!stats[vendorId]) {
+      fetchStats(vendorId)
+    }
+  }
+
   useEffect(() => {
     if (!user) return
     fetchVendors()
@@ -58,12 +109,10 @@ export default function VendorsPage() {
         </button>
       </div>
 
-      {error && (
-        <div className="text-warning text-sm">{error}</div>
-      )}
+      {error && <div className="text-warning text-sm">{error}</div>}
 
       <div className="overflow-x-auto">
-        <table className="min-w-[640px] w-full text-sm">
+        <table className="min-w-[720px] w-full text-sm">
           <thead>
             <tr className="text-left border-b border-border">
               <th scope="col" className="py-2 pr-4">Nome</th>
@@ -71,23 +120,95 @@ export default function VendorsPage() {
               <th scope="col" className="py-2 pr-4">Ativo</th>
               <th scope="col" className="py-2 pr-4">Criado</th>
               <th scope="col" className="py-2 pr-4">Atualizado</th>
+              <th scope="col" className="py-2 pr-2 text-right">Ações</th>
             </tr>
           </thead>
           <tbody>
             {vendors.length === 0 && !loading && (
               <tr>
-                <td colSpan={5} className="py-6 text-muted-foreground">Nenhum vendedor encontrado.</td>
+                <td colSpan={6} className="py-6 text-muted-foreground">Nenhum vendedor encontrado.</td>
               </tr>
             )}
-            {vendors.map(v => (
-              <tr key={v.id} className="border-b border-border/50">
-                <td className="py-2 pr-4">{v.name}</td>
-                <td className="py-2 pr-4 font-mono text-xs">{v.userId}</td>
-                <td className="py-2 pr-4">{v.active ? 'Sim' : 'Não'}</td>
-                <td className="py-2 pr-4">{v.createdAt ? new Date(v.createdAt).toLocaleString() : '-'}</td>
-                <td className="py-2 pr-4">{v.updatedAt ? new Date(v.updatedAt).toLocaleString() : '-'}</td>
-              </tr>
-            ))}
+            {vendors.map((v) => {
+              const isOpen = openInfo === v.userId
+              const s = stats[v.userId]
+              return (
+                <tr key={v.id} className="border-b border-border/50">
+                  <td className="py-2 pr-4">{v.name}</td>
+                  <td className="py-2 pr-4 font-mono text-xs">{v.userId}</td>
+                  <td className="py-2 pr-4">{v.active ? 'Sim' : 'Não'}</td>
+                  <td className="py-2 pr-4">{v.createdAt ? new Date(v.createdAt).toLocaleString() : '-'}</td>
+                  <td className="py-2 pr-4">{v.updatedAt ? new Date(v.updatedAt).toLocaleString() : '-'}</td>
+                  <td className="py-2 pl-2 pr-2 relative">
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => toggleInfo(v.userId)}
+                        className="px-2 py-1 text-sm rounded-lg border border-border bg-surface hover:brightness-110"
+                      >
+                        Mais informações
+                      </button>
+                    </div>
+
+                    {isOpen && (
+                      <div className="absolute right-2 top-full z-20 mt-2 w-[28rem] rounded-lg border border-border bg-surface p-3 shadow-xl">
+                        <div className="flex items-start justify-between">
+                          <div className="font-medium">Resumo do vendedor</div>
+                          <button
+                            onClick={() => setOpenInfo(null)}
+                            className="px-2 py-1 text-xs rounded-md hover:bg-muted"
+                            aria-label="Fechar"
+                          >
+                            ×
+                          </button>
+                        </div>
+
+                        {loadingInfo && <div className="text-sm text-muted-foreground mt-2">Carregando…</div>}
+                        {!loadingInfo && (
+                          <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div>
+                              <div className="font-medium text-xs mb-1">Grupos criados</div>
+                              <ul className="text-xs list-disc list-inside space-y-0.5">
+                                {s?.createdGroups?.length ? (
+                                  s.createdGroups.map((g) => (
+                                    <li key={g.id}>{g.label || g.id}</li>
+                                  ))
+                                ) : (
+                                  <li className="text-muted-foreground">Nenhum</li>
+                                )}
+                              </ul>
+                            </div>
+                            <div>
+                              <div className="font-medium text-xs mb-1">Grupos com venda</div>
+                              <ul className="text-xs list-disc list-inside space-y-0.5">
+                                {s?.soldGroups?.length ? (
+                                  s.soldGroups.map((g) => (
+                                    <li key={g.id}>{g.label || g.id}</li>
+                                  ))
+                                ) : (
+                                  <li className="text-muted-foreground">Nenhum</li>
+                                )}
+                              </ul>
+                            </div>
+                            <div>
+                              <div className="font-medium text-xs mb-1">Participa</div>
+                              <ul className="text-xs list-disc list-inside space-y-0.5">
+                                {s?.participating?.length ? (
+                                  s.participating.map((g) => (
+                                    <li key={g.id}>{g.label || g.id}</li>
+                                  ))
+                                ) : (
+                                  <li className="text-muted-foreground">Nenhum</li>
+                                )}
+                              </ul>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
