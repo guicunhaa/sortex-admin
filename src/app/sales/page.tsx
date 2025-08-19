@@ -1,5 +1,4 @@
 'use client'
-
 import { useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import GlassCard from '@/components/ui/GlassCard'
@@ -8,28 +7,23 @@ import { useRole } from '@/hooks/useRole'
 import { db } from '@/lib/firebase'
 import Label from '@/components/ui/form/Label'
 import Select from '@/components/ui/form/Select'
+import Input from '@/components/ui/form/Input'
 import {
-  collection,
-  getDocs,
-  getDoc,
-  doc,
-  query,
-  where,
-  orderBy,
-  limit,
-  startAfter,
-  type DocumentSnapshot,
+  collection, getDocs, getDoc, doc, query, where, orderBy, limit, startAfter,
+  Timestamp, type DocumentSnapshot
 } from 'firebase/firestore'
 
 type Sale = {
   id: string
   number: string
+  groupId?: string
+  groupName?: string
   vendorId: string
   vendorName?: string
   clientId?: string
   clientName?: string
   total: number
-  status: 'pago' | 'pendente'
+  status: 'pago'|'pendente'
   region?: string
   date: Date
 }
@@ -45,41 +39,18 @@ export default function SalesPage() {
   const { user } = useAuth()
   const role = useRole()
 
-  // filtros ativos
-  const [numberFilter, setNumberFilter] = useState<string>('') // "00" .. "70" ou ""
-  const [vendor, setVendor] = useState<string>('') // admin escolhe; vendedor ignora
+  // filtros (somente número e vendedor como você pediu)
+  const [numberFilter, setNumberFilter] = useState<string>('')
+  const [vendor, setVendor] = useState<string>('') // admin escolhe; vendor ignora
 
-  // suporte à UI
   const [vendorOpts, setVendorOpts] = useState<VendorOpt[]>([])
   const [clientNames, setClientNames] = useState<Record<string, string>>({})
+  const [groupNames, setGroupNames] = useState<Record<string, string>>({})
 
-  // dados carregados
   const [rows, setRows] = useState<Sale[]>([])
   const [cursor, setCursor] = useState<DocumentSnapshot | undefined>()
   const [hasMore, setHasMore] = useState(true)
   const [loading, setLoading] = useState(false)
-
-  // ===== Helpers =====
-
-  function norm2(n: any) {
-    return String(n ?? '').padStart(2, '0')
-  }
-
-  // Filtro visual sempre aplicado na renderização (fallback mesmo que a query já filtre)
-  const visibleRows = useMemo(() => {
-    if (!numberFilter) return rows
-    return rows.filter(r => norm2(r.number) === numberFilter)
-  }, [rows, numberFilter])
-
-  // KPIs sobre os dados visíveis
-  const kpis = useMemo(() => {
-    const total = visibleRows.reduce((s, r) => s + (r.total || 0), 0)
-    const pagos = visibleRows
-      .filter(r => r.status === 'pago')
-      .reduce((s, r) => s + (r.total || 0), 0)
-    const pend = total - pagos
-    return { total, pagos, pend }
-  }, [visibleRows])
 
   async function loadVendors() {
     if (role !== 'admin' || !user) return
@@ -92,31 +63,23 @@ export default function SalesPage() {
       if (res.ok) {
         const j = await res.json()
         if (Array.isArray(j?.vendors)) {
-          const opts: VendorOpt[] = j.vendors.map((v: any) => ({
-            id: v.uid || v.id,
-            name: v.name || v.email || v.uid || v.id,
-          }))
+          const opts: VendorOpt[] = j.vendors.map((v: any) => ({ id: v.uid || v.id, name: v.name || v.email || v.uid || v.id }))
           setVendorOpts(opts)
           return
         }
       }
-    } catch {
-      /* silencioso */
-    }
+    } catch {}
   }
-
-  // ===== Carregadores =====
 
   async function loadFirst() {
     if (!user) return
     setLoading(true)
-
     const col = collection(db, 'sales')
     const clauses: any[] = [orderBy('date', 'desc'), limit(PAGE_SIZE)]
 
-    // vendedor comum só vê dele
+    // vendor só vê dele
     if (role !== 'admin' && user?.uid) clauses.unshift(where('vendorId', '==', user.uid))
-    // admin pode filtrar um vendedor específico
+    // admin pode filtrar vendor
     if (role === 'admin' && vendor) clauses.unshift(where('vendorId', '==', vendor))
     // número (string "00".."70")
     if (numberFilter) clauses.unshift(where('number', '==', numberFilter))
@@ -124,25 +87,25 @@ export default function SalesPage() {
     const snap = await getDocs(query(col, ...clauses))
     const docs = snap.docs
 
-    setRows(
-      docs.map(d => {
-        const s: any = d.data()
-        return {
-          id: d.id,
-          number: s.number ?? '',
-          vendorId: s.vendorId ?? '',
-          vendorName: s.vendorName ?? '',
-          clientId: s.clientId ?? '',
-          clientName: s.clientName ?? '',
-          total: Number(s.total ?? 0),
-          status: (s.status as 'pago' | 'pendente') ?? 'pendente',
-          region: s.region ?? '',
-          date: s.date?.toDate?.() ?? new Date(0),
-        }
-      }),
-    )
+    setRows(docs.map(d => {
+      const s:any = d.data()
+      return {
+        id: d.id,
+        number: s.number ?? '',
+        groupId: s.groupId ?? s.gid ?? s.group ?? '',
+        groupName: s.groupName ?? s.groupLabel ?? s.group_name ?? '',
+        vendorId: s.vendorId ?? '',
+        vendorName: s.vendorName ?? '',
+        clientId: s.clientId ?? '',
+        clientName: s.clientName ?? '',
+        total: Number(s.total ?? 0),
+        status: s.status ?? 'pendente',
+        region: s.region ?? '',
+        date: s.date?.toDate?.() ?? new Date(0),
+      } as Sale
+    }))
 
-    // fallback: preencher select de vendedores com o que veio das vendas, caso API não responda
+    // preencher select de vendedores com o que veio das vendas, caso API falhe
     if (role === 'admin' && vendorOpts.length === 0) {
       const uniq = new Map<string, string>()
       docs.forEach(d => {
@@ -153,7 +116,7 @@ export default function SalesPage() {
       if (uniq.size) setVendorOpts(Array.from(uniq, ([id, name]) => ({ id, name })))
     }
 
-    setCursor(docs.length ? docs[docs.length - 1] : undefined)
+    setCursor(docs.length ? docs[docs.length-1] : undefined)
     setHasMore(docs.length === PAGE_SIZE)
     setLoading(false)
   }
@@ -161,10 +124,8 @@ export default function SalesPage() {
   async function loadMore() {
     if (!cursor || !user) return
     setLoading(true)
-
     const col = collection(db, 'sales')
     const clauses: any[] = [orderBy('date', 'desc'), startAfter(cursor), limit(PAGE_SIZE)]
-
     if (role !== 'admin' && user?.uid) clauses.unshift(where('vendorId', '==', user.uid))
     if (role === 'admin' && vendor) clauses.unshift(where('vendorId', '==', vendor))
     if (numberFilter) clauses.unshift(where('number', '==', numberFilter))
@@ -172,24 +133,23 @@ export default function SalesPage() {
     const snap = await getDocs(query(col, ...clauses))
     const docs = snap.docs
 
-    setRows(prev => [
-      ...prev,
-      ...docs.map(d => {
-        const s: any = d.data()
-        return {
-          id: d.id,
-          number: s.number ?? '',
-          vendorId: s.vendorId ?? '',
-          vendorName: s.vendorName ?? '',
-          clientId: s.clientId ?? '',
-          clientName: s.clientName ?? '',
-          total: Number(s.total ?? 0),
-          status: (s.status as 'pago' | 'pendente') ?? 'pendente',
-          region: s.region ?? '',
-          date: s.date?.toDate?.() ?? new Date(0),
-        }
-      }),
-    ])
+    setRows(prev => [...prev, ...docs.map(d => {
+      const s:any = d.data()
+      return {
+        id: d.id,
+        number: s.number ?? '',
+        groupId: s.groupId ?? s.gid ?? s.group ?? '',
+        groupName: s.groupName ?? s.groupLabel ?? s.group_name ?? '',
+        vendorId: s.vendorId ?? '',
+        vendorName: s.vendorName ?? '',
+        clientId: s.clientId ?? '',
+        clientName: s.clientName ?? '',
+        total: Number(s.total ?? 0),
+        status: s.status ?? 'pendente',
+        region: s.region ?? '',
+        date: s.date?.toDate?.() ?? new Date(0),
+      } as Sale
+    })])
 
     if (role === 'admin' && vendorOpts.length === 0) {
       const uniq = new Map<string, string>()
@@ -201,31 +161,29 @@ export default function SalesPage() {
       if (uniq.size) setVendorOpts(Array.from(uniq, ([id, name]) => ({ id, name })))
     }
 
-    setCursor(docs.length ? docs[docs.length - 1] : undefined)
+    setCursor(docs.length ? docs[docs.length-1] : undefined)
     setHasMore(docs.length === PAGE_SIZE)
     setLoading(false)
   }
 
   // recarrega quando filtros mudam
-  useEffect(() => {
-    loadFirst()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vendor, numberFilter, role, user?.uid])
+  useEffect(() => { loadFirst() }, [numberFilter, vendor, role, user?.uid])
+  useEffect(() => { loadVendors() }, [role, user?.uid])
 
-  useEffect(() => {
-    loadVendors()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, user?.uid])
+  // KPIs dos resultados carregados
+  const kpis = useMemo(() => {
+    const total = rows.reduce((s, r) => s + (r.total || 0), 0)
+    const pagos = rows.filter(r => r.status === 'pago').reduce((s, r) => s + (r.total || 0), 0)
+    const pend  = total - pagos
+    return { total, pagos, pend }
+  }, [rows])
 
-  // completa nomes de clientes ausentes
+  // Resolver nomes de clientes sob demanda
   useEffect(() => {
-    const missing = Array.from(
-      new Set(
-        visibleRows
-          .filter(r => r.clientId && !r.clientName && !clientNames[r.clientId!])
-          .map(r => r.clientId!),
-      ),
-    )
+    const missing = Array.from(new Set(
+      rows.filter(r => r.clientId && !r.clientName && !clientNames[r.clientId!])
+          .map(r => r.clientId!)
+    ))
     if (!missing.length) return
     ;(async () => {
       const updates: Record<string, string> = {}
@@ -235,21 +193,40 @@ export default function SalesPage() {
           const data: any = snap.exists() ? snap.data() : null
           const name = data?.name || data?.nome || data?.displayName || ''
           if (name) updates[id] = name
-        } catch {
-          /* noop */
-        }
+        } catch {}
       }
       if (Object.keys(updates).length) setClientNames(prev => ({ ...prev, ...updates }))
     })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleRows])
+  }, [rows])
+
+  // Resolver nomes de grupos sob demanda (chave para parar de ver UID)
+  useEffect(() => {
+    const missing = Array.from(new Set(
+      rows.filter(r => r.groupId && !r.groupName && !groupNames[r.groupId!])
+          .map(r => r.groupId!)
+    ))
+    if (!missing.length) return
+    ;(async () => {
+      const updates: Record<string, string> = {}
+      for (const gid of missing.slice(0, 25)) {
+        try {
+          const snap = await getDoc(doc(db, 'groups', gid))
+          const data: any = snap.exists() ? snap.data() : null
+          const name = data?.label || data?.name || data?.nome || data?.title || gid
+          updates[gid] = name
+        } catch {
+          updates[gid] = gid
+        }
+      }
+      if (Object.keys(updates).length) setGroupNames(prev => ({ ...prev, ...updates }))
+    })()
+  }, [rows])
 
   return (
     <div className="min-h-screen">
       <Sidebar />
-
       <div className="pt-14 md:pt-0 ml-0 md:ml-60 p-4 sm:p-6">
-        {/* Header + filtros */}
+        {/* Filtros (somente Número e Vendedor) */}
         <GlassCard className="p-4 mb-4">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-3 md:gap-4">
             <div>
@@ -259,42 +236,26 @@ export default function SalesPage() {
             <div className="flex flex-wrap items-end gap-2">
               <div>
                 <Label>Número</Label>
-                <Select
-                  value={numberFilter}
-                  onChange={e => setNumberFilter(e.target.value)}
-                  className="w-28"
-                >
+                <Select value={numberFilter} onChange={e => setNumberFilter(e.target.value)} className="w-28">
                   <option value="">Todos</option>
                   {NUMBER_OPTS.map(n => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
+                    <option key={n} value={n}>{n}</option>
                   ))}
                 </Select>
               </div>
-
-              {role === 'admin' && (
+              {role==='admin' && (
                 <div>
                   <Label>Vendedor</Label>
-                  <Select
-                    value={vendor}
-                    onChange={e => setVendor(e.target.value)}
-                    className="w-56"
-                  >
+                  <Select value={vendor} onChange={e=>setVendor(e.target.value)} className="w-56">
                     <option value="">Todos</option>
                     {vendorOpts.map(v => (
-                      <option key={v.id} value={v.id}>
-                        {v.name || v.id}
-                      </option>
+                      <option key={v.id} value={v.id}>{v.name || v.id}</option>
                     ))}
                   </Select>
                 </div>
               )}
-
-              <button
-                onClick={loadFirst}
-                className="self-end rounded px-3 py-2 border border-border bg-surface hover:brightness-110 text-foreground text-sm"
-              >
+              <button onClick={loadFirst}
+                      className="self-end rounded px-3 py-2 border border-border bg-surface hover:brightness-110 text-foreground text-sm">
                 Aplicar
               </button>
             </div>
@@ -319,98 +280,53 @@ export default function SalesPage() {
 
         {/* Tabela */}
         <GlassCard className="p-0 overflow-hidden">
-          <div className="overflow-x-auto max-w-full" aria-busy={loading}>
-            <div className="inline-block min-w-full align-middle">
-              <table className="min-w-[960px] w-full text-sm border-collapse">
-                <caption className="sr-only">
-                  Tabela de vendas com filtros e paginação
-                </caption>
-                <thead className="bg-surface backdrop-blur supports-[backdrop-filter]:bg-surface/90 sticky top-0 z-10">
-                  <tr>
-                    <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">
-                      Data
-                    </th>
-                    <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">
-                      Número
-                    </th>
-                    <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">
-                      Vendedor
-                    </th>
-                    <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">
-                      Cliente
-                    </th>
-                    <th className="text-right font-medium text-muted px-4 py-3 border-b border-border">
-                      Total
-                    </th>
-                    <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">
-                      Status
-                    </th>
-                    <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">
-                      Região
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading && visibleRows.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="px-4 py-6 text-muted">
-                        Carregando…
-                      </td>
-                    </tr>
-                  )}
-
-                  {visibleRows.map(s => (
-                    <tr key={s.id} className="border-t border-border hover:bg-surface">
-                      <td className="px-4 py-3">{DATE.format(s.date)}</td>
-                      <td className="px-4 py-3">{norm2(s.number)}</td>
-                      <td className="px-4 py-3">{s.vendorName || s.vendorId}</td>
-                      <td className="px-4 py-3">
-                        {s.clientName ||
-                          (s.clientId && clientNames[s.clientId]) ||
-                          s.clientId ||
-                          '-'}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {CURRENCY.format(s.total)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={
-                            'px-2 py-1 rounded text-xs border ' +
-                            (s.status === 'pago'
-                              ? 'bg-success/10 text-success border-success/30'
-                              : 'bg-warning/10 text-warning border-warning/30')
-                          }
-                        >
-                          {s.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">{s.region || '-'}</td>
-                    </tr>
-                  ))}
-
-                  {!loading && visibleRows.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="px-4 py-10 text-center text-muted">
-                        Sem registros neste filtro.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
+          <div className="overflow-x-auto max-w-full" aria-busy={loading}><div className="inline-block min-w-full align-middle"><table className="min-w-[1040px] w-full text-sm border-collapse">
+            <thead className="bg-surface backdrop-blur supports-[backdrop-filter]:bg-surface/90 sticky top-0 z-10">
+              <tr>
+                <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">Data</th>
+                <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">Número</th>
+                <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">Grupo</th>
+                <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">Vendedor</th>
+                <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">Cliente</th>
+                <th className="text-right font-medium text-muted px-4 py-3 border-b border-border">Total</th>
+                <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">Status</th>
+                <th className="text-left font-medium text-muted px-4 py-3 border-b border-border">Região</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && rows.length===0 && (
+                <tr><td colSpan={8} className="px-4 py-6 text-muted">Carregando…</td></tr>
+              )}
+              {rows.map(s => (
+                <tr key={s.id} className="border-t border-border hover:bg-surface">
+                  <td className="px-4 py-3">{DATE.format(s.date)}</td>
+                  <td className="px-4 py-3">{s.number}</td>
+                  <td className="px-4 py-3">{s.groupName || (s.groupId ? (groupNames[s.groupId] || s.groupId) : '-')}</td>
+                  <td className="px-4 py-3">{s.vendorName || s.vendorId}</td>
+                  <td className="px-4 py-3">{s.clientName || (s.clientId && clientNames[s.clientId]) || s.clientId || '-'}</td>
+                  <td className="px-4 py-3 text-right">{CURRENCY.format(s.total)}</td>
+                  <td className="px-4 py-3">
+                    <span className={
+                      'px-2 py-1 rounded text-xs border ' +
+                      (s.status === 'pago'
+                        ? 'bg-success/10 text-success border-success/30'
+                        : 'bg-warning/10 text-warning border-warning/30')
+                    }>
+                      {s.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">{s.region || '-'}</td>
+                </tr>
+              ))}
+              {!loading && rows.length===0 && (
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-muted">Sem registros neste filtro.</td></tr>
+              )}
+            </tbody>
+          </table></div></div>
           <div className="flex items-center justify-between px-4 py-3">
-            <div className="text-xs text-muted" aria-live="polite">
-              {visibleRows.length} registro(s)
-            </div>
-            <button
-              onClick={loadMore}
-              disabled={!hasMore || loading}
-              aria-label={loading ? 'Carregando' : hasMore ? 'Carregar mais registros' : 'Fim da lista'}
-              className="px-3 py-1 rounded border border-border bg-surface hover:brightness-110 text-foreground disabled:opacity-50"
-            >
+            <div className="text-xs text-muted" aria-live="polite">{rows.length} registro(s)</div>
+            <button onClick={loadMore} disabled={!hasMore || loading}
+              className="px-3 py-1 rounded border border-border bg-surface hover:brightness-110 text-foreground disabled:opacity-50">
               {loading ? 'Carregando…' : hasMore ? 'Carregar mais' : 'Fim'}
             </button>
           </div>
