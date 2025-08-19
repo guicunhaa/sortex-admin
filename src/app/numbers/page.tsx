@@ -31,9 +31,12 @@ type NumDoc = {
   saleStatus?: 'pending' | 'confirmed' | 'canceled' | null
   clientName?: string | null
   vendorId?: string | null
+  vendorName?: string | null
+  total?: number | null
 }
 
 type VendorOpt = { id: string; name: string }
+const fmtBRL = (v?: number | null) => (typeof v === 'number' ? v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : null)
 
 export default function NumbersPage() {
   const { user, loading } = useAuth()
@@ -56,7 +59,7 @@ export default function NumbersPage() {
   const [vendors, setVendors] = useState<VendorOpt[]>([])
   // mapa: "00" -> { saleId, vendorId, clientName? }
   const [pendingByNumber, setPendingByNumber] = useState<Record<string, { saleId: string; vendorId: string; clientName?: string | null }>>({})
-  const [paidByNumber, setPaidByNumber] = useState<Record<string, { clientName?: string | null }>>({})
+  const [paidByNumber, setPaidByNumber] = useState<Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null }>>({})
 
   // tick de 1s para countdown — pausado com modais abertos para não roubar foco
   useEffect(() => {
@@ -118,6 +121,8 @@ export default function NumbersPage() {
         saleStatus: it.saleStatus ?? null,
         clientName: it.clientName ?? null,
         vendorId: it.vendorId ?? null,
+        vendorName: it.vendorName ?? null,
+        total: typeof it.total === 'number' ? it.total : null,
       }))
       list.sort((a, b) => Number(a.id) - Number(b.id))
       setNums(list)
@@ -139,6 +144,8 @@ export default function NumbersPage() {
             saleStatus: s.saleStatus ?? null,
             clientName: s.clientName ?? null,
             vendorId: s.vendorId ?? null,
+            vendorName: s.vendorName ?? null,
+            total: typeof s.total === 'number' ? s.total : null,
           } as NumDoc
         })
         list.sort((a, b) => Number(a.id) - Number(b.id))
@@ -182,11 +189,15 @@ export default function NumbersPage() {
       where('status', '==', 'pago'),
     )
     const gSnap = await getDocs(q2)
-    const paid: Record<string, { clientName?: string | null }> = {}
+    const paid: Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null }> = {}
     gSnap.forEach((d) => {
       const s = d.data() as any
       const n = String(s.number).padStart(2, '0')
-      paid[n] = { clientName: s.clientName ?? null }
+      paid[n] = {
+        clientName: s.clientName ?? null,
+        vendorName: s.vendorName ?? null,
+        total: typeof s.total === 'number' ? s.total : null,
+      }
     })
 
     setPendingByNumber(pend)
@@ -569,12 +580,20 @@ export default function NumbersPage() {
                 // sold
                 const soldInfo = paidByNumber[n.id]
                 const soldClient = soldInfo?.clientName ?? n.clientName
+                const soldVendor = soldInfo?.vendorName ?? n.vendorName ?? null
+                const soldTotal = soldInfo?.total ?? n.total ?? null
+                const titleText = [
+                  'Vendido',
+                  soldTotal != null ? `Valor: ${fmtBRL(soldTotal)}` : null,
+                  soldClient ? `Cliente: ${soldClient}` : null,
+                  soldVendor ? `Vendedor: ${soldVendor}` : null,
+                ].filter(Boolean).join('\n')
                 return (
                   <button
                     key={n.id}
                     className={`${palette.sold} relative rounded-lg py-4 md:py-5 text-base md:text-lg font-medium`}
-                    title={`Vendido${soldClient ? ` para ${soldClient}` : ''}`}
-                    aria-label={`Número ${n.id} vendido${soldClient ? ` para ${soldClient}` : ''}`}
+                    title={titleText}
+                    aria-label={titleText.replace(/\n/g, '; ')}
                     disabled
                   >
                     {n.id}
