@@ -22,8 +22,7 @@ const schema = z.object({
   groupId: z.string().min(1),
   number: z.string().min(1),
   clientId: z.string().min(1), // obrigatório: cliente deve vir da base
-  region: z.string().optional(), // no Sub-lote B vira Select com @/lib/regions
-  quantity: z.coerce.number().min(1),
+  region: z.string().min(1), // preenchida automaticamente pelo cliente
   total: z.coerce.number().min(0),
   status: z.enum(['pago','pendente']),
 })
@@ -52,7 +51,6 @@ export default function NewSaleModal({
       vendorName: user?.displayName ?? (user?.email ?? 'Vendedor'),
       total: 0,
       status: 'pago',
-      quantity: 1,
       region: '',
       clientId: '',
     } : undefined
@@ -201,7 +199,7 @@ export default function NewSaleModal({
         clientId: data.clientId,
         total: data.total,
         status: data.status,
-        quantity: data.quantity,
+        quantity: 1,
         region: data.region,
       })
       reset()
@@ -340,12 +338,7 @@ export default function NewSaleModal({
           {errors.clientId && <HelperText variant="error">{String(errors.clientId.message)}</HelperText>}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <Label>Qtd</Label>
-            <Input id="quantity" type="number" {...register('quantity', { valueAsNumber:true })} error={!!errors.quantity} />
-            {errors.quantity && <HelperText variant="error">{String(errors.quantity.message)}</HelperText>}
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
             <Label>Total (R$)</Label>
             <Input id="total" type="number" step="0.01" {...register('total', { valueAsNumber:true })} error={!!errors.total} />
@@ -363,7 +356,7 @@ export default function NewSaleModal({
 
         <div>
           <Label>Região</Label>
-          <Select id="region" {...register('region')}>
+          <Select id="region" {...register('region')} disabled className="opacity-70 pointer-events-none">
             <option value="">Selecione</option>
             {Object.entries(REGIONS).map(([code, meta]) => (
               <option key={code} value={code}>
