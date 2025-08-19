@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { collection, getDocs, limit, orderBy, query, startAfter, where, Timestamp, type DocumentSnapshot, type DocumentData } from 'firebase/firestore'
+import { collection, getDocs, getDoc, doc, limit, orderBy, query, startAfter, where, Timestamp, type DocumentSnapshot, type DocumentData } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/contexts/AuthContext'
 import GlassCard from '@/components/ui/GlassCard'
@@ -16,7 +16,7 @@ import ThemeToggle from '@/components/ui/ThemeToggle'
 import { REGIONS } from '@/lib/regions'
 
 type Sale = {
-  id:string; vendorName:string; vendorId:string; region:string; groupId:string; number:string;
+  id:string; vendorName:string; vendorId:string; region:string; groupId:string; groupName?:string; number:string;
   quantity:number; total:number; status:'pago'|'pendente'; date:Date
 }
 
@@ -36,6 +36,7 @@ function toSale(d:DocumentData):Sale{
     vendorId:d.get('vendorId')??'',
     region:d.get('region')??'',
     groupId:d.get('groupId')??'',
+    groupName:d.get('groupName') ?? d.get('group_label') ?? d.get('groupLabel') ?? '',
     number:String(d.get('number')??''),
     quantity:Number(d.get('quantity')??0),
     total:Number(d.get('total')??0),
@@ -60,6 +61,29 @@ export default function DashboardPage(){
   const [showTotal,setShowTotal]=useState(true)
 
   const [vendors,setVendors]=useState<VendorOpt[]>([])
+  const [groupNames, setGroupNames] = useState<Record<string,string>>({})
+  useEffect(() => {
+    const missing = Array.from(new Set(
+      sales
+        .filter(s => s.groupId && !s.groupName && !groupNames[s.groupId])
+        .map(s => s.groupId)
+    ))
+    if (!missing.length) return
+    ;(async () => {
+      const updates: Record<string, string> = {}
+      for (const gid of missing.slice(0, 25)) {
+        try {
+          const snap = await getDoc(doc(db, 'groups', gid))
+          const data: any = snap.exists() ? snap.data() : null
+          const name = data?.label ?? data?.name ?? data?.nome ?? data?.title ?? ''
+          if (name) updates[gid] = name
+        } catch {
+          /* noop */
+        }
+      }
+      if (Object.keys(updates).length) setGroupNames(prev => ({ ...prev, ...updates }))
+    })()
+  }, [sales])
 
   // carregar opções de vendedores
   useEffect(()=>{(async()=>{
@@ -197,40 +221,42 @@ export default function DashboardPage(){
 
         {/* CONTAINER */}
         <div className="mx-auto max-w-7xl px-4 md:px-6 py-6">
-          {/* FILTER BAR */}
-          <GlassCard className="px-4 py-3">
-            <div className="flex flex-col md:flex-row md:items-end gap-3">
-              <div className="flex-1">
-                <Label>Vendedor</Label>
-                <Select value={filters.vendor??''}
-                  onChange={e=>setFilters(f=>({...f,vendor:e.target.value||undefined}))}>
-                  <option value="">{role==='admin'?'Todos':'Meu usuário'}</option>
-                  {vendors.map(v => (
-                    <option key={v.id} value={v.id}>{v.name} ({v.id})</option>
-                  ))}
-                </Select>
+          {/* FILTER BAR (apenas para admin) */}
+          {role === 'admin' && (
+            <GlassCard className="px-4 py-3">
+              <div className="flex flex-col md:flex-row md:items-end gap-3">
+                <div className="flex-1">
+                  <Label>Vendedor</Label>
+                  <Select value={filters.vendor??''}
+                    onChange={e=>setFilters(f=>({...f,vendor:e.target.value||undefined}))}>
+                    <option value="">{role==='admin'?'Todos':'Meu usuário'}</option>
+                    {vendors.map(v => (
+                      <option key={v.id} value={v.id}>{v.name} ({v.id})</option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="flex-1">
+                  <Label>Região</Label>
+                  <Select value={filters.region??''}
+                    onChange={e=>setFilters(f=>({...f,region:e.target.value||undefined}))}>
+                    <option value="">Todas</option>
+                    {regionOptions.map((r:any)=> (
+                      <option key={String(r.value)} value={String(r.value)}>{r.label} ({String(r.value)})</option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="w-full md:w-48">
+                  <Label>Status</Label>
+                  <Select value={filters.status??''}
+                    onChange={e=>setFilters(f=>({...f,status:e.target.value as any}))}>
+                    <option value="">Todos</option>
+                    <option value="pago">Pago</option>
+                    <option value="pendente">Pendente</option>
+                  </Select>
+                </div>
               </div>
-              <div className="flex-1">
-                <Label>Região</Label>
-                <Select value={filters.region??''}
-                  onChange={e=>setFilters(f=>({...f,region:e.target.value||undefined}))}>
-                  <option value="">Todas</option>
-                  {regionOptions.map((r:any)=> (
-                    <option key={String(r.value)} value={String(r.value)}>{r.label} ({String(r.value)})</option>
-                  ))}
-                </Select>
-              </div>
-              <div className="w-full md:w-48">
-                <Label>Status</Label>
-                <Select value={filters.status??''}
-                  onChange={e=>setFilters(f=>({...f,status:e.target.value as any}))}>
-                  <option value="">Todos</option>
-                  <option value="pago">Pago</option>
-                  <option value="pendente">Pendente</option>
-                </Select>
-              </div>
-            </div>
-          </GlassCard>
+            </GlassCard>
+          )}
 
           {/* KPIs */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
@@ -326,7 +352,7 @@ export default function DashboardPage(){
                       <td className="px-4 py-3">{DATE.format(s.date)}</td>
                       <td className="px-4 py-3">{s.vendorName}</td>
                       <td className="px-4 py-3">{s.number}</td>
-                      <td className="px-4 py-3">{s.groupId}</td>
+                      <td className="px-4 py-3">{s.groupName || (s.groupId && groupNames[s.groupId]) || s.groupId}</td>
                       <td className="px-4 py-3 text-right">{s.quantity}</td>
                       <td className="px-4 py-3 text-right">{CURRENCY.format(s.total)}</td>
                       <td className="px-4 py-3">{s.region}</td>
