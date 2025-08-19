@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // regra mínima só pra compilar; NÃO será publicada com --only firestore:indexes
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
