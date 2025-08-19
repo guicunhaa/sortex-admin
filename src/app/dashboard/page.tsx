@@ -72,43 +72,76 @@ export default function DashboardPage(){
   // carrega primeira página ao mudar filtros ou quando criar venda
   useEffect(()=>{ let alive=true;(async()=>{
     setLoadingPage(true)
-    const col=collection(db,'sales')
-    const clauses:any[]=[orderBy('date','desc'),limit(PAGE_SIZE)]
+    const col = collection(db,'sales')
 
-    // Segurança: se não for admin, limita ao próprio vendedor sempre
-    if (role !== 'admin' && user?.uid) clauses.unshift(where('vendorId','==', user.uid))
+    // helper para montar as clausulas com campo de ordenação parametrizado
+    const buildClauses = (orderField: 'date'|'__name__') => {
+      const base:any[] = [limit(PAGE_SIZE)]
+      if (orderField === 'date') base.unshift(orderBy('date','desc'))
+      else base.unshift(orderBy('__name__'))
 
-    // Filtros (admin pode aplicar qualquer um)
-    if(filters.vendor) clauses.unshift(where('vendorId','==',filters.vendor))
-    if(filters.region) clauses.unshift(where('region','==',filters.region))
-    if(filters.status) clauses.unshift(where('status','==',filters.status))
+      // Segurança: se não for admin, limita ao próprio vendedor sempre
+      if (role !== 'admin' && user?.uid) base.unshift(where('vendorId','==', user.uid))
+      // Filtros (admin pode aplicar qualquer um)
+      if (filters.vendor) base.unshift(where('vendorId','==',filters.vendor))
+      if (filters.region) base.unshift(where('region','==',filters.region))
+      if (filters.status) base.unshift(where('status','==',filters.status))
+      return base
+    }
 
-    const snap=await getDocs(query(col,...clauses))
-    if(!alive) return
-    const docs=snap.docs
-    setSales(docs.map(toSale))
-    setCursor(docs.length?docs[docs.length-1]:undefined)
-    setHasMore(docs.length===PAGE_SIZE)
-    setLoadingPage(false)
+    try {
+      const snap = await getDocs(query(col, ...buildClauses('date')))
+      if(!alive) return
+      const docs = snap.docs
+      setSales(docs.map(toSale))
+      setCursor(docs.length ? docs[docs.length-1] : undefined)
+      setHasMore(docs.length === PAGE_SIZE)
+    } catch (err:any) {
+      // Fallback: se faltar índice para (filtros + orderBy date), ordena por __name__
+      const snap = await getDocs(query(col, ...buildClauses('__name__')))
+      if(!alive) return
+      const docs = snap.docs
+      setSales(docs.map(toSale))
+      setCursor(docs.length ? docs[docs.length-1] : undefined)
+      setHasMore(docs.length === PAGE_SIZE)
+    } finally {
+      if(alive) setLoadingPage(false)
+    }
   })();return()=>{alive=false}} ,[filters.vendor,filters.region,filters.status,refreshTick, role, user?.uid])
 
   async function loadMore(){
     if(!cursor) return
     setLoadingPage(true)
-    const col=collection(db,'sales')
-    const clauses:any[]=[orderBy('date','desc'),startAfter(cursor),limit(PAGE_SIZE)]
+    const col = collection(db,'sales')
 
-    if (role !== 'admin' && user?.uid) clauses.unshift(where('vendorId','==', user.uid))
-    if(filters.vendor) clauses.unshift(where('vendorId','==',filters.vendor))
-    if(filters.region) clauses.unshift(where('region','==',filters.region))
-    if(filters.status) clauses.unshift(where('status','==',filters.status))
+    const buildClauses = (orderField: 'date'|'__name__') => {
+      const base:any[] = [startAfter(cursor), limit(PAGE_SIZE)]
+      if (orderField === 'date') base.unshift(orderBy('date','desc'))
+      else base.unshift(orderBy('__name__'))
 
-    const snap=await getDocs(query(col,...clauses))
-    const docs=snap.docs
-    setSales(prev=>[...prev,...docs.map(toSale)])
-    setCursor(docs.length?docs[docs.length-1]:undefined)
-    setHasMore(docs.length===PAGE_SIZE)
-    setLoadingPage(false)
+      if (role !== 'admin' && user?.uid) base.unshift(where('vendorId','==', user.uid))
+      if (filters.vendor) base.unshift(where('vendorId','==',filters.vendor))
+      if (filters.region) base.unshift(where('region','==',filters.region))
+      if (filters.status) base.unshift(where('status','==',filters.status))
+      return base
+    }
+
+    try {
+      const snap = await getDocs(query(col, ...buildClauses('date')))
+      const docs = snap.docs
+      setSales(prev=>[...prev, ...docs.map(toSale)])
+      setCursor(docs.length ? docs[docs.length-1] : undefined)
+      setHasMore(docs.length === PAGE_SIZE)
+    } catch (err:any) {
+      // Fallback sem índice: ordena por __name__ (reinicia paginação nesse eixo)
+      const snap = await getDocs(query(col, ...buildClauses('__name__')))
+      const docs = snap.docs
+      setSales(prev=>[...prev, ...docs.map(toSale)])
+      setCursor(docs.length ? docs[docs.length-1] : undefined)
+      setHasMore(docs.length === PAGE_SIZE)
+    } finally {
+      setLoadingPage(false)
+    }
   }
 
   const kpis=useMemo(()=>{
