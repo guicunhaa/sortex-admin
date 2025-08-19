@@ -25,12 +25,18 @@ export async function POST(req: Request) {
     clientId,
     clientName,
     total,
-    quantity,
-    region,
     status,
   } = body ?? {}
 
-  if (!groupId || (number === undefined || number === null) || !vendorName || typeof total !== 'number' || !status) {
+  if (
+    !groupId ||
+    (number === undefined || number === null) ||
+    !vendorName ||
+    typeof total !== 'number' ||
+    !Number.isFinite(total) ||
+    total < 0 ||
+    !status
+  ) {
     return NextResponse.json({ error: 'missing_params' }, { status: 400 })
   }
 
@@ -59,6 +65,7 @@ export async function POST(req: Request) {
   const now = admin.firestore.Timestamp.now()
   const numRef = adminDb.collection('groups').doc(groupId).collection('numbers').doc(nId)
   const salesRef = adminDb.collection('sales').doc()
+  const clientRef = clientId ? adminDb.collection('clients').doc(String(clientId)) : null
 
   try {
     const res = await adminDb.runTransaction(async (tx) => {
@@ -75,17 +82,28 @@ export async function POST(req: Request) {
         throw new Error('number_not_reserved_by_you')
       }
 
+      // Region comes from the client record (server authoritative)
+      let saleRegion = ''
+      if (clientRef) {
+        const clientSnap = await tx.get(clientRef)
+        if (clientSnap.exists) {
+          const c = clientSnap.data() as any
+          saleRegion = String(c?.region || c?.regiao || '')
+        }
+      }
+
       // Cria venda
       const saleDoc = {
         groupId,
         number: nId,
         vendorId: effectiveVendorId,
         vendorName,
+        vendorEmail: (decoded as any)?.email ?? null,
         clientId: clientId ?? null,
         clientName: clientName ?? null,
         total,
-        quantity: quantity ?? 1,
-        region: region ?? '',
+        quantity: 1, // sempre 1 neste fluxo
+        region: saleRegion,
         status,
         date: now,
       }
