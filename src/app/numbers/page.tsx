@@ -60,9 +60,9 @@ export default function NumbersPage() {
   // mapa: "00" -> { saleId, vendorId, clientName? }
   const [pendingByNumber, setPendingByNumber] = useState<Record<string, { saleId: string; vendorId: string; clientName?: string | null }>>({})
   const [paidByNumber, setPaidByNumber] = useState<Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null; saleId?: string | null }>>({})
-  const [ctx, setCtx] = useState<{ open: boolean; x: number; y: number; num?: NumDoc; saleId?: string }>({ open: false, x: 0, y: 0 })
+  const [contextMenu, setContextMenu] = useState<null | { x: number; y: number; number: NumDoc }>(null)
   useEffect(() => {
-    const h = () => setCtx((s) => ({ ...s, open: false }))
+    const h = () => setContextMenu(null)
     window.addEventListener('click', h)
     return () => window.removeEventListener('click', h)
   }, [])
@@ -404,6 +404,21 @@ export default function NumbersPage() {
     }
   }
 
+  async function markOpen(n: NumDoc) {
+    if (!user || !groupId) return
+    const token = await auth.currentUser?.getIdToken()
+    const res = await fetch('/api/sales/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ groupId, number: Number(n.id) }),
+    })
+    const ok = res.ok && (await res.json().catch(() => ({} as any))).ok
+    if (ok) {
+      setNums((s) => s.map((x) => (x.id === n.id ? { ...x, status: 'reserved', saleStatus: 'pendente' } : x)))
+      await loadPendingAndPaid(groupId, isAdmin, user.uid)
+    }
+    setContextMenu(null)
+  }
 
   async function onCreated() {
     if (!user || !groupId) return
@@ -476,10 +491,12 @@ export default function NumbersPage() {
             {(isAdmin || canCreateGroups) && (
               <div className="shrink-0">
                 <button
+                  type="button"
                   onClick={() => setOpenCreate(true)}
-                  className="mt-6 rounded-lg px-4 py-2 border border-border bg-surface hover:brightness-110 text-foreground text-sm"
+                  className="mt-6 text-sm text-primary hover:underline"
+                  aria-label="Criar novo grupo com números 00 a 70"
                 >
-                  + Criar grupo<span className="hidden sm:inline"> (0..70)</span>
+                  + Criar grupo
                 </button>
               </div>
             )}
@@ -516,7 +533,7 @@ export default function NumbersPage() {
                 const mine = isMine(n)
                 const pendHit = pendingByNumber[n.id]
                 const showReserved =
-                  n.status === 'reserved' && ((n.lock?.until && left > 0) || pendHit)
+                  n.status === 'reserved' && (n.saleStatus === 'pendente' || (n.lock?.until && left > 0) || pendHit)
 
                 if (!showReserved && n.status !== 'sold') {
                   const cls = n.canceled ? palette.availableCanceled : palette.available
@@ -571,20 +588,25 @@ export default function NumbersPage() {
                     )
                   }
 
+                  const isOpen = n.saleStatus === 'pendente' && !n.lock?.until
                   return (
                     <button
                       key={n.id}
                       onClick={() => (mine ? resume(n.id) : undefined)}
                       disabled={!mine || !!busy[n.id]}
-                      className={`${
-                        palette.reserved
-                      } relative rounded-lg py-4 md:py-5 text-base md:text-lg font-medium transition ${mine ? '' : 'opacity-60 cursor-not-allowed'}`}
-                      aria-label={`Número ${n.id} reservado ${mine ? 'por você' : 'por outro vendedor'}`}
+                      className={`${isOpen ? palette.open : palette.reserved} relative rounded-lg py-4 md:py-5 text-base md:text-lg font-medium transition ${mine ? '' : 'opacity-60 cursor-not-allowed'}`}
+                      aria-label={
+                        isOpen
+                          ? `Número ${n.id} em aberto`
+                          : `Número ${n.id} reservado ${mine ? 'por você' : 'por outro vendedor'}`
+                      }
                     >
                       {n.id}
-                      <span className="ml-2 text-[10px] opacity-70" aria-live="polite">
-                        {mm}:{ss}
-                      </span>
+                      {!isOpen && (
+                        <span className="ml-2 text-[10px] opacity-70" aria-live="polite">
+                          {mm}:{ss}
+                        </span>
+                      )}
                     </button>
                   )
                 }
@@ -608,8 +630,7 @@ export default function NumbersPage() {
                     aria-label={titleText.replace(/\n/g, '; ')}
                     onContextMenu={(e) => {
                       e.preventDefault()
-                      const paid = paidByNumber[n.id]
-                      setCtx({ open: true, x: e.clientX, y: e.clientY, num: n, saleId: paid?.saleId })
+                      setContextMenu({ x: e.clientX, y: e.clientY, number: n })
                     }}
                     disabled
                   >
@@ -620,39 +641,24 @@ export default function NumbersPage() {
             </div>
           )}
         </GlassCard>
-        {ctx.open && (
+        {contextMenu && (
           <div
-            className="fixed z-50 bg-surface border border-border rounded-md shadow-lg overflow-hidden text-sm"
-            style={{ left: ctx.x, top: ctx.y, minWidth: 180 }}
-            onMouseLeave={() => setCtx(s => ({ ...s, open: false }))}
-            onClick={e => e.stopPropagation()}
+            className="fixed z-50 bg-surface border border-border rounded-lg shadow-xl text-sm"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+            onMouseLeave={() => setContextMenu(null)}
+            onClick={(e) => e.stopPropagation()}
           >
             <button
-              className="block w-full text-left px-3 py-2 hover:bg-muted/20"
-              onClick={async () => {
-                if (!ctx.num || !ctx.saleId || !groupId) return
-                const token = await auth.currentUser?.getIdToken()
-                await fetch('/api/sales/open', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                  body: JSON.stringify({ groupId, number: Number(ctx.num.id), saleId: ctx.saleId }),
-                })
-                setCtx(s => ({ ...s, open: false }))
-                await loadPendingAndPaid(groupId, isAdmin, user!.uid)
-                await loadNumbers(groupId)
-              }}
-            >
-              Marcar como em aberto
-            </button>
-            <button
-              className="block w-full text-left px-3 py-2 hover:bg-muted/20"
-              onClick={async () => {
-                if (!ctx.num || !ctx.saleId) return
-                await cancelSale({ ...ctx.num, saleId: ctx.saleId })
-                setCtx(s => ({ ...s, open: false }))
-              }}
+              className="block w-full text-left px-3 py-2 hover:bg-muted/40"
+              onClick={() => cancelSale(contextMenu.number)}
             >
               Cancelar venda
+            </button>
+            <button
+              className="block w-full text-left px-3 py-2 hover:bg-muted/40"
+              onClick={() => markOpen(contextMenu.number)}
+            >
+              Marcar como “em aberto”
             </button>
           </div>
         )}

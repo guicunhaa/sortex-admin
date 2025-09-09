@@ -4,7 +4,7 @@ import { adminAuth, adminDb, Field } from '@/lib/firebaseAdmin'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// POST /api/sales/open { groupId, number, saleId }
+// POST /api/sales/open  { groupId, number }
 export async function POST(req: Request) {
   try {
     const ah = req.headers.get('authorization') ?? ''
@@ -12,24 +12,24 @@ export async function POST(req: Request) {
     if (!token) return NextResponse.json({ ok:false, error:'missing_token' }, { status:401 })
     await adminAuth.verifyIdToken(token)
 
-    const { groupId, number, saleId } = await req.json()
-    if (!groupId || typeof number !== 'number' || !saleId) {
+    const { groupId, number } = await req.json()
+    if (!groupId || typeof number !== 'number') {
       return NextResponse.json({ ok:false, error:'missing_fields' }, { status:400 })
     }
-    const numId = String(number).padStart(2, '0')
 
-    const gref = adminDb.collection('groups').doc(groupId)
-    const nref = gref.collection('numbers').doc(numId)
-    const sref = adminDb.collection('sales').doc(saleId)
+    const numId = String(number).padStart(2,'0')
+    const nref = adminDb.collection('groups').doc(groupId).collection('numbers').doc(numId)
 
     await adminDb.runTransaction(async (tx) => {
-      // número volta a "reserved" (em aberto), venda fica pendente
-      tx.set(nref, { status:'reserved', saleStatus:'pendente', updatedAt: Field.serverTimestamp() }, { merge:true })
-      tx.update(sref, { status:'pendente', updatedAt: Field.serverTimestamp() })
+      tx.set(nref, {
+        status: 'reserved',         // azul / em aberto
+        saleStatus: 'pendente',
+        updatedAt: Field.serverTimestamp(),
+      }, { merge: true })
     })
 
     return NextResponse.json({ ok:true })
   } catch (e:any) {
-    return NextResponse.json({ ok:false, error:e?.message || 'internal_error' }, { status:500 })
+    return NextResponse.json({ ok:false, error: e?.message || 'internal_error' }, { status:500 })
   }
 }

@@ -23,6 +23,7 @@ type Sale = {
   groupId: string
   groupName?: string
   number: string
+  clientId?: string
   clientName?: string
   quantity: number
   total: number
@@ -48,6 +49,7 @@ function toSale(d: DocumentData): Sale {
     groupId: d.get('groupId') ?? '',
     groupName: d.get('groupName') ?? d.get('group_label') ?? d.get('groupLabel') ?? '',
     number: String(d.get('number') ?? ''),
+    clientId: d.get('clientId') ?? '',
     clientName: d.get('clientName') ?? '',
     quantity: Number(d.get('quantity') ?? 0),
     total: Number(d.get('total') ?? 0),
@@ -72,6 +74,7 @@ export default function DashboardPage(){
 
   const [vendors,setVendors]=useState<VendorOpt[]>([])
   const [groupNames, setGroupNames] = useState<Record<string,string>>({})
+  const [clientNames, setClientNames] = useState<Record<string,string>>({})
   useEffect(() => {
     const missing = Array.from(new Set(
       sales
@@ -94,6 +97,28 @@ export default function DashboardPage(){
       if (Object.keys(updates).length) setGroupNames(prev => ({ ...prev, ...updates }))
     })()
   }, [sales])
+
+  useEffect(() => {
+    ;(async () => {
+      const ids = Array.from(
+        new Set(
+          sales
+            .map(r => (r as any).clientId as string | undefined)
+            .filter(Boolean)
+            .filter(id => !clientNames[id!])
+        )
+      )
+      if (!ids.length) return
+      const snaps = await Promise.all(ids.map(id => getDoc(doc(db, 'clients', id!)).catch(() => null)))
+      const up: Record<string,string> = {}
+      snaps.forEach(s => { if (s?.exists()) up[s.id] = (s.data() as any).name ?? '' })
+      if (Object.keys(up).length) setClientNames(prev => ({ ...prev, ...up }))
+    })()
+  }, [sales])
+
+  function displayClient(r: any) {
+    return r.clientName || (r.clientId && clientNames[r.clientId]) || '—'
+  }
 
   // carregar opções de vendedores
   useEffect(()=>{(async()=>{
@@ -296,7 +321,7 @@ export default function DashboardPage(){
             <GlassCard className="p-4 lg:col-span-2">
               <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={lineData} margin={{ top: 8, right: 24, bottom: 20, left: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
+                  <CartesianGrid strokeOpacity={0.15} />
                   <XAxis
                     dataKey="date"
                     tickFormatter={(d: Date | string | number) =>
@@ -392,7 +417,7 @@ export default function DashboardPage(){
                       <td className="px-4 py-3">{s.vendorName}</td>
                       <td className="px-4 py-3">{s.number}</td>
                       <td className="px-4 py-3">{s.groupName || (s.groupId && groupNames[s.groupId]) || s.groupId}</td>
-                      <td className="px-4 py-3">{s.clientName || '—'}</td>
+                      <td className="px-4 py-3">{displayClient(s)}</td>
                       <td className="px-4 py-3 text-right">{CURRENCY.format(s.total)}</td>
                       <td className="px-4 py-3">{s.region}</td>
                       <td className="px-4 py-3">

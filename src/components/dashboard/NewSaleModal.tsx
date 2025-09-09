@@ -61,6 +61,29 @@ export default function NewSaleModal({
   const clientId = watch('clientId')
 
   useEffect(() => {
+    if (!open) return
+    const me = auth.currentUser
+    const meName = me?.displayName ?? me?.email ?? 'Vendedor'
+    const base = {
+      vendorId: isAdmin ? (vendorId || me?.uid || '') : (me?.uid || ''),
+      vendorName: isAdmin ? (watch('vendorName') || meName) : meName,
+      groupId: initialGroupId || '',
+      number: initialNumber || '',
+      clientId: '',
+      region: '',
+      total: 0,
+      status: 'pago' as const,
+    }
+    reset(base, { keepDirty: false, keepValues: false })
+    if (initialGroupId) {
+      loadNumbersAPI(initialGroupId).catch(() => {})
+    }
+    if (initialGroupId && initialNumber) {
+      ensureReservedAPI(initialGroupId, initialNumber).catch(() => {})
+    }
+  }, [open])
+
+  useEffect(() => {
     (async () => {
       if (!user?.uid) { setIsAdmin(false); return }
       const tr = await auth.currentUser?.getIdTokenResult?.()
@@ -225,19 +248,13 @@ export default function NewSaleModal({
       const meName = user.displayName ?? user.email ?? 'Vendedor'
       if (!isAdmin) {
         setVendors([{ id: user.uid, name: meName }])
-        setValue('vendorId', user.uid, { shouldDirty: false })
-        setValue('vendorName', meName, { shouldDirty: false })
       } else {
         const snap = await getDocs(collection(db, 'vendors'))
         const list = snap.docs.map(d => ({ id: d.id, name: (d.data() as any).name ?? d.id }))
         setVendors(list)
-        if (user?.uid) {
-          setValue('vendorId', user.uid, { shouldDirty: false })
-          setValue('vendorName', meName, { shouldDirty: false })
-        }
       }
     })()
-  }, [open, user, isAdmin, setValue])
+  }, [open, user, isAdmin])
 
   // Vendor name espelhado
   useEffect(()=>{
@@ -248,8 +265,14 @@ export default function NewSaleModal({
   // Carregar grupos do vendor escolhido via API
   useEffect(()=>{(async()=>{
     if(!vendorId) { setGroups([]); return }
-    try { await loadGroupsAPI(vendorId) } catch {}
-  })()},[vendorId])
+    try {
+      const list = await loadGroupsAPI(vendorId)
+      if (!watch('groupId') && list[0]) {
+        setValue('groupId', list[0].id, { shouldDirty: false })
+        await loadNumbersAPI(list[0].id)
+      }
+    } catch {}
+  })()},[vendorId, watch, setValue])
 
   // Carregar clientes do vendor escolhido para Select (com region)
   useEffect(()=>{(async()=>{
@@ -268,32 +291,6 @@ export default function NewSaleModal({
     if(!groupId) { setNumbers([]); return }
     try { await loadNumbersAPI(groupId) } catch { setNumbers([]) }
   })()},[groupId])
-
-  useEffect(() => {
-    if (!open) return
-    ;(async () => {
-      try {
-        const list = await loadGroupsAPI(isAdmin ? watch('vendorId') : undefined)
-        const gid = (watch('groupId') || list?.[0]?.id) ?? ''
-        if (gid) {
-          setValue('groupId', gid, { shouldDirty: false })
-          await loadNumbersAPI(gid)
-        }
-      } catch {
-        /* silent */
-      }
-    })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
-
-  // Se o modal for aberto do /numbers, garantimos que o vendor está correto e valores preenchidos, e carregamos números
-  useEffect(()=>{(async()=>{
-    if(initialGroupId) {
-      setValue('groupId', initialGroupId, { shouldDirty:false })
-      try { await loadNumbersAPI(initialGroupId) } catch {}
-    }
-    if(initialNumber) setValue('number', initialNumber, { shouldDirty:false })
-  })()},[initialGroupId, initialNumber, setValue])
 
   return (
     <Modal open={open} onClose={() => { reset(); onClose() }} title="Registrar venda">
