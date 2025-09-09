@@ -28,7 +28,7 @@ type NumDoc = {
   canceled?: boolean
   // venda vinculada (opcional)
   saleId?: string | null
-  saleStatus?: 'pending' | 'confirmed' | 'canceled' | null
+  saleStatus?: 'pendente' | 'pago' | 'cancelado' | null
   clientName?: string | null
   vendorId?: string | null
   vendorName?: string | null
@@ -60,6 +60,12 @@ export default function NumbersPage() {
   // mapa: "00" -> { saleId, vendorId, clientName? }
   const [pendingByNumber, setPendingByNumber] = useState<Record<string, { saleId: string; vendorId: string; clientName?: string | null }>>({})
   const [paidByNumber, setPaidByNumber] = useState<Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null }>>({})
+  const [ctx, setCtx] = useState<null | { x:number; y:number; n: NumDoc }>(null)
+  useEffect(() => {
+    const h = () => setCtx(null)
+    window.addEventListener('click', h)
+    return () => window.removeEventListener('click', h)
+  }, [])
 
   // tick de 1s para countdown — pausado com modais abertos para não roubar foco
   useEffect(() => {
@@ -343,7 +349,7 @@ export default function NumbersPage() {
 
       // sucesso: marca como vendido
       setNums((s) =>
-        s.map((x) => (x.id === n.id ? { ...x, status: 'sold', lock: undefined, canceled: false, saleStatus: 'confirmed' } : x))
+        s.map((x) => (x.id === n.id ? { ...x, status: 'sold', lock: undefined, canceled: false, saleStatus: 'pago' } : x))
       )
       await loadPendingAndPaid(groupId, isAdmin, user.uid)
       if (focus === n.id) {
@@ -383,7 +389,7 @@ export default function NumbersPage() {
       if (!res.ok || !data?.ok) throw new Error(data?.error || 'falha_cancelar_venda')
 
       // sucesso: libera o número
-      setNums((s) => s.map((x) => (x.id === n.id ? { ...x, status: 'available', lock: undefined, saleStatus: 'canceled' } : x)))
+      setNums((s) => s.map((x) => (x.id === n.id ? { ...x, status: 'available', lock: undefined, saleStatus: undefined } : x)))
       await loadPendingAndPaid(groupId, isAdmin, user.uid)
       if (focus === n.id) {
         setOpen(false)
@@ -394,6 +400,42 @@ export default function NumbersPage() {
       setMsg(e?.message || 'Não foi possível cancelar a venda.')
     } finally {
       setBusy((b) => ({ ...b, [n.id]: false }))
+    }
+  }
+
+  async function markPending(n: NumDoc) {
+    if (!user || !groupId) return
+    const token = await auth.currentUser?.getIdToken()
+    const res = await fetch('/api/sales/mark-pending', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
+      body: JSON.stringify({ groupId, number: Number(n.id), saleId: n.saleId ?? null }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (res.ok && data?.ok) {
+      setNums(s => s.map(x => x.id===n.id ? { ...x, status:'sold', saleStatus:'pendente' } : x))
+      await loadPendingAndPaid(groupId, isAdmin, user.uid)
+      setCtx(null)
+    } else {
+      setMsg(data?.error || 'Falha ao marcar como aberto')
+    }
+  }
+
+  async function cancelSold(n: NumDoc) {
+    if (!user || !groupId) return
+    const token = await auth.currentUser?.getIdToken()
+    const res = await fetch('/api/sales/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
+      body: JSON.stringify({ groupId, number: Number(n.id), saleId: n.saleId ?? null }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (res.ok && data?.ok) {
+      setNums(s => s.map(x => x.id===n.id ? { ...x, status:'available', saleStatus: undefined, saleId: null, vendorId:null, vendorName:null, clientName:null, total:null } : x))
+      await loadPendingAndPaid(groupId, isAdmin, user.uid)
+      setCtx(null)
+    } else {
+      setMsg(data?.error || 'Falha ao cancelar venda')
     }
   }
 
@@ -438,6 +480,7 @@ export default function NumbersPage() {
     availableCanceled: 'bg-warning/5 text-warning border border-warning/40 hover:brightness-110',
     reserved: 'bg-warning/10 text-warning border border-warning/30',
     sold: 'bg-success/10 text-success border border-success/30 cursor-default',
+    open: 'bg-primary/10 text-primary border border-primary/30', // pendente (azul)
   }
 
   return (
@@ -584,8 +627,9 @@ export default function NumbersPage() {
                 const soldClient = soldInfo?.clientName ?? n.clientName
                 const soldVendor = soldInfo?.vendorName ?? n.vendorName ?? null
                 const soldTotal = soldInfo?.total ?? n.total ?? null
+                const isOpen = n.saleStatus === 'pendente'
                 const titleText = [
-                  'Vendido',
+                  isOpen ? 'Em aberto' : 'Vendido',
                   soldTotal != null ? `Valor: ${fmtBRL(soldTotal)}` : null,
                   soldClient ? `Cliente: ${soldClient}` : null,
                   soldVendor ? `Vendedor: ${soldVendor}` : null,
@@ -593,9 +637,13 @@ export default function NumbersPage() {
                 return (
                   <button
                     key={n.id}
-                    className={`${palette.sold} relative rounded-lg py-4 md:py-5 text-base md:text-lg font-medium`}
+                    className={`${isOpen ? palette.open : palette.sold} relative rounded-lg py-4 md:py-5 text-base md:text-lg font-medium`}
                     title={titleText}
                     aria-label={titleText.replace(/\n/g, '; ')}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      setCtx({ x: e.clientX, y: e.clientY, n })
+                    }}
                     disabled
                   >
                     {n.id}
@@ -605,6 +653,27 @@ export default function NumbersPage() {
             </div>
           )}
         </GlassCard>
+
+        {ctx && (
+          <div
+            className="fixed z-50 bg-surface border border-border rounded-md shadow-lg overflow-hidden"
+            style={{ left: ctx.x, top: ctx.y, minWidth: 180 }}
+            onClick={(e)=> e.stopPropagation()}
+          >
+            <button
+              className="w-full text-left px-3 py-2 hover:bg-muted/20"
+              onClick={() => markPending(ctx.n)}
+            >
+              Marcar como em aberto
+            </button>
+            <button
+              className="w-full text-left px-3 py-2 hover:bg-muted/20 text-warning"
+              onClick={() => cancelSold(ctx.n)}
+            >
+              Cancelar venda
+            </button>
+          </div>
+        )}
 
         {/* Modal de venda */}
         <NewSaleModal

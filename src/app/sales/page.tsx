@@ -17,6 +17,7 @@ type Row = {
   groupName?: string
   vendorName: string
   clientName: string
+  clientId?: string | null
   total: number
   status: 'pago' | 'pendente'
   region: string
@@ -27,6 +28,7 @@ type Filters = { number?: number; vendor?: string }
 const DATE = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
 const CURRENCY = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
 const PAGE_SIZE = 20
+const pad2 = (n:number) => String(n).padStart(2,'0')
 
 function toRow(d: DocumentData): Row {
   const data = d.data()
@@ -42,6 +44,7 @@ function toRow(d: DocumentData): Row {
     groupName: data.groupName ?? data.groupLabel ?? data.group_label ?? '',
     vendorName: data.vendorName ?? '',
     clientName: data.clientName ?? data.client ?? '',
+    clientId: data.clientId ?? null,
     total: Number(data.total ?? 0),
     status: (data.status ?? 'pendente') as Row['status'],
     region: data.region ?? '',
@@ -61,6 +64,7 @@ export default function SalesPage() {
 
   const [vendors, setVendors] = useState<{ id: string; name: string }[]>([])
   const [groupNames, setGroupNames] = useState<Record<string, string>>({})
+  const [clientNames, setClientNames] = useState<Record<string, string>>({})
 
   // Vendors dropdown
   useEffect(() => {
@@ -88,6 +92,24 @@ export default function SalesPage() {
     })()
   }, [rows, groupNames])
 
+  // Busca nomes de clientes quando ausentes
+  useEffect(() => {
+    const missing = Array.from(new Set(rows.filter(r => !r.clientName && r.clientId && !clientNames[r.clientId]).map(r => r.clientId!)))
+    if (!missing.length) return
+    ;(async () => {
+      const up: Record<string, string> = {}
+      for (const cid of missing.slice(0, 25)) {
+        try {
+          const s = await getDoc(doc(db, 'clients', cid))
+          const data: any = s.exists() ? s.data() : null
+          const name = data?.name ?? ''
+          if (name) up[cid] = name
+        } catch {}
+      }
+      if (Object.keys(up).length) setClientNames(prev => ({ ...prev, ...up }))
+    })()
+  }, [rows, clientNames])
+
   // Builder das cláusulas (com fallback de ordenação)
   function buildClauses(orderField: 'date' | '__name__') {
     const parts: any[] = []
@@ -98,9 +120,7 @@ export default function SalesPage() {
     if (role !== 'admin' && user?.uid) parts.push(where('vendorId', '==', user.uid))
     if (filters.vendor) parts.push(where('vendorId', '==', filters.vendor))
 
-    if (typeof filters.number !== 'undefined') {
-      parts.push(where('numberInt', '==', Number(filters.number)))
-    }
+    if (typeof filters.number === 'number') parts.push(where('number','==', pad2(filters.number)))
 
     // paginação/limite no fim
     return parts
@@ -261,7 +281,7 @@ export default function SalesPage() {
                       <td className="px-4 py-3">{String(r.number).padStart(2, '0')}</td>
                       <td className="px-4 py-3">{r.groupName || groupNames[r.groupId] || r.groupId}</td>
                       <td className="px-4 py-3">{r.vendorName}</td>
-                      <td className="px-4 py-3">{r.clientName}</td>
+                      <td className="px-4 py-3">{r.clientName || (r.clientId ? (clientNames[r.clientId] || r.clientId) : '')}</td>
                       <td className="px-4 py-3 text-right">{CURRENCY.format(r.total)}</td>
                       <td className="px-4 py-3">
                         <span
