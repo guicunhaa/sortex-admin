@@ -398,10 +398,11 @@ export default function NumbersPage() {
   }
 
   async function onCreated() {
-    if (!focus || !user || !groupId) return
-    // venda é criada como 'pendente' — apenas fecha o modal e recarrega mapas para habilitar Confirmar/Cancelar
+    if (!user || !groupId) return
     setOpen(false)
     setFocus(null)
+    // recarrega números para refletir a venda recém-criada
+    await loadNumbers(groupId)
     await loadPendingAndPaid(groupId, isAdmin, user.uid)
   }
 
@@ -503,8 +504,12 @@ export default function NumbersPage() {
                   : 0
                 const mm = String(Math.floor(left / 60)).padStart(2, '0')
                 const ss = String(left % 60).padStart(2, '0')
+                const mine = isMine(n)
+                const pendHit = pendingByNumber[n.id]
+                const showReserved =
+                  n.status === 'reserved' && ((n.lock?.until && left > 0) || pendHit)
 
-                if (n.status === 'available') {
+                if (!showReserved && n.status !== 'sold') {
                   const cls = n.canceled ? palette.availableCanceled : palette.available
                   return (
                     <button
@@ -518,10 +523,7 @@ export default function NumbersPage() {
                     </button>
                   )
                 }
-                if (n.status === 'reserved') {
-                  const mine = isMine(n)
-                  // mostra ações somente se houver venda pendente mapeada para este número
-                  const pendHit = pendingByNumber[n.id]
+                if (showReserved) {
                   if (pendHit && (isAdmin || pendHit.vendorId === user?.uid || mine)) {
                     return (
                       <div

@@ -30,9 +30,10 @@ const PAGE_SIZE = 20
 
 function toRow(d: DocumentData): Row {
   const data = d.data()
-  // Garanta número numérico
-  const rawNum = data.number
-  const num = typeof rawNum === 'number' ? rawNum : Number(String(rawNum || '0'))
+  const num =
+    typeof data.numberInt === 'number'
+      ? data.numberInt
+      : Number(String(data.number ?? '0'))
   return {
     id: d.id,
     date: (data.date?.toDate?.() ?? new Date(data.date ?? 0)) as Date,
@@ -97,14 +98,8 @@ export default function SalesPage() {
     if (role !== 'admin' && user?.uid) parts.push(where('vendorId', '==', user.uid))
     if (filters.vendor) parts.push(where('vendorId', '==', filters.vendor))
 
-    // Número: alguns docs antigos têm `number` salvo como string com zero à esquerda ("04")
-    // e outros como number (4). Usamos `in` para cobrir ambos formatos.
     if (typeof filters.number !== 'undefined') {
-      const n = Number(filters.number)
-      const s = String(n)
-      const s2 = s.padStart(2, '0')
-      const values: any[] = Array.from(new Set([n, s, s2]))
-      parts.push(where('number', 'in', values))
+      parts.push(where('numberInt', '==', Number(filters.number)))
     }
 
     // paginação/limite no fim
