@@ -35,7 +35,7 @@ function toRow(d: DocumentData): Row {
   const num =
     typeof data.numberInt === 'number'
       ? data.numberInt
-      : Number(String(data.number ?? '0'))
+      : Number(String(data.numberPad ?? data.number ?? '0'))
   return {
     id: d.id,
     date: (data.date?.toDate?.() ?? new Date(data.date ?? 0)) as Date,
@@ -120,7 +120,9 @@ export default function SalesPage() {
     if (role !== 'admin' && user?.uid) parts.push(where('vendorId', '==', user.uid))
     if (filters.vendor) parts.push(where('vendorId', '==', filters.vendor))
 
-    if (typeof filters.number === 'number') parts.push(where('number','==', pad2(filters.number)))
+if (typeof filters.number !== 'undefined') {
+  parts.push(where('numberPad', '==', pad2(filters.number)))
+}
 
     // paginação/limite no fim
     return parts

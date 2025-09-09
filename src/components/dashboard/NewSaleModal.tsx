@@ -190,13 +190,14 @@ export default function NewSaleModal({
     try {
       const nId = padNumber(Number(data.number))
       await ensureReserved(data.groupId, nId)
-
+      const client = clients.find(c => c.id === data.clientId)
       await createSale({
         groupId: data.groupId,
         number: nId,
         vendorId: data.vendorId, // importante: admin pode vender por outro vendedor
         vendorName: data.vendorName,
         clientId: data.clientId,
+        clientName: client?.name ?? '',
         total: data.total,
         status: data.status,
         quantity: 1,
@@ -217,28 +218,26 @@ export default function NewSaleModal({
   },[clientId, clients, setValue])
 
   // Carrega vendedores (admin vê todos; vendedor só ele)
-  useEffect(()=>{(async()=>{
-    if(!user) return
-    const meName = user.displayName ?? user.email ?? 'Vendedor'
-    if (!isAdmin) {
-      // vendedor comum: trava no próprio vendedor
-      setVendors([{ id: user.uid, name: meName }])
-      setValue('vendorId', user.uid, { shouldDirty:false })
-      setValue('vendorName', meName, { shouldDirty:false })
-      return
-    }
-    // admin: carrega todos
-    const snap = await getDocs(collection(db,'vendors'))
-    const list = snap.docs.map(d=>({id:d.id, name:(d.data() as any).name ?? d.id}))
-    setVendors(list)
-    if (user?.uid) {
-      setValue('vendorId', user.uid, { shouldDirty:false })
-      setValue('vendorName', meName, { shouldDirty:false })
-    }
-  })()},[user, isAdmin, setValue])
-
-  // Prefill vendor para vendedor logado
-  useEffect(()=>{ if(user?.uid){ setValue('vendorId', user.uid, { shouldDirty:false }) } },[user?.uid, setValue])
+  useEffect(() => {
+    (async () => {
+      if (!open) return
+      if (!user) return
+      const meName = user.displayName ?? user.email ?? 'Vendedor'
+      if (!isAdmin) {
+        setVendors([{ id: user.uid, name: meName }])
+        setValue('vendorId', user.uid, { shouldDirty: false })
+        setValue('vendorName', meName, { shouldDirty: false })
+      } else {
+        const snap = await getDocs(collection(db, 'vendors'))
+        const list = snap.docs.map(d => ({ id: d.id, name: (d.data() as any).name ?? d.id }))
+        setVendors(list)
+        if (user?.uid) {
+          setValue('vendorId', user.uid, { shouldDirty: false })
+          setValue('vendorName', meName, { shouldDirty: false })
+        }
+      }
+    })()
+  }, [open, user, isAdmin, setValue])
 
   // Vendor name espelhado
   useEffect(()=>{
@@ -270,6 +269,23 @@ export default function NewSaleModal({
     try { await loadNumbersAPI(groupId) } catch { setNumbers([]) }
   })()},[groupId])
 
+  useEffect(() => {
+    if (!open) return
+    ;(async () => {
+      try {
+        const list = await loadGroupsAPI(isAdmin ? watch('vendorId') : undefined)
+        const gid = (watch('groupId') || list?.[0]?.id) ?? ''
+        if (gid) {
+          setValue('groupId', gid, { shouldDirty: false })
+          await loadNumbersAPI(gid)
+        }
+      } catch {
+        /* silent */
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
   // Se o modal for aberto do /numbers, garantimos que o vendor está correto e valores preenchidos, e carregamos números
   useEffect(()=>{(async()=>{
     if(initialGroupId) {
@@ -280,7 +296,7 @@ export default function NewSaleModal({
   })()},[initialGroupId, initialNumber, setValue])
 
   return (
-    <Modal open={open} onClose={onClose} title="Registrar venda">
+    <Modal open={open} onClose={() => { reset(); onClose() }} title="Registrar venda">
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="md:col-span-1">
@@ -368,7 +384,7 @@ export default function NewSaleModal({
 
         {err && <p className="text-warning text-sm">{err}</p>}
         <div className="pt-2 flex items-center justify-end gap-2">
-          <button type="button" onClick={onClose}
+          <button type="button" onClick={() => { reset(); onClose() }}
             className="px-4 py-2 rounded-lg border border-border bg-surface hover:brightness-110 text-foreground">Cancelar</button>
           <button disabled={isSubmitting}
             className="px-4 py-2 rounded-lg border border-border bg-surface hover:brightness-110 disabled:opacity-50 text-foreground">

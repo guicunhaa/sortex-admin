@@ -27,6 +27,7 @@ export async function POST(req: Request) {
 
     const gid = String(gidRaw || '').trim()
     const number = padNumber(numRaw)
+    const numberPad = number
     const numberInt = parseInt(number, 10)
     if (!gid) return NextResponse.json({ error: 'group_required' }, { status: 400 })
     if (Number(number) < MIN_NUMBER || Number(number) > MAX_NUMBER) {
@@ -77,7 +78,8 @@ export async function POST(req: Request) {
           groupName, // <<<<<<<<<<<<<< grava o NOME do grupo
 
           // Número/Venda
-          number, // string "00".."70" (padNumber)
+          number: numberPad, // string "00".."70" (padNumber)
+          numberPad,
           numberInt,
           vendorId: requesterUid,
           vendorName,

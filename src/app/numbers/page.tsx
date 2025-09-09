@@ -59,10 +59,10 @@ export default function NumbersPage() {
   const [vendors, setVendors] = useState<VendorOpt[]>([])
   // mapa: "00" -> { saleId, vendorId, clientName? }
   const [pendingByNumber, setPendingByNumber] = useState<Record<string, { saleId: string; vendorId: string; clientName?: string | null }>>({})
-  const [paidByNumber, setPaidByNumber] = useState<Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null }>>({})
-  const [ctx, setCtx] = useState<null | { x:number; y:number; n: NumDoc }>(null)
+  const [paidByNumber, setPaidByNumber] = useState<Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null; saleId?: string | null }>>({})
+  const [ctx, setCtx] = useState<{ open: boolean; x: number; y: number; num?: NumDoc; saleId?: string }>({ open: false, x: 0, y: 0 })
   useEffect(() => {
-    const h = () => setCtx(null)
+    const h = () => setCtx((s) => ({ ...s, open: false }))
     window.addEventListener('click', h)
     return () => window.removeEventListener('click', h)
   }, [])
@@ -195,7 +195,7 @@ export default function NumbersPage() {
       where('status', '==', 'pago'),
     )
     const gSnap = await getDocs(q2)
-    const paid: Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null }> = {}
+    const paid: Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null; saleId?: string | null }> = {}
     gSnap.forEach((d) => {
       const s = d.data() as any
       const n = String(s.number).padStart(2, '0')
@@ -203,6 +203,7 @@ export default function NumbersPage() {
         clientName: s.clientName ?? null,
         vendorName: s.vendorName ?? null,
         total: typeof s.total === 'number' ? s.total : null,
+        saleId: d.id,
       }
     })
 
@@ -403,41 +404,6 @@ export default function NumbersPage() {
     }
   }
 
-  async function markPending(n: NumDoc) {
-    if (!user || !groupId) return
-    const token = await auth.currentUser?.getIdToken()
-    const res = await fetch('/api/sales/mark-pending', {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
-      body: JSON.stringify({ groupId, number: Number(n.id), saleId: n.saleId ?? null }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (res.ok && data?.ok) {
-      setNums(s => s.map(x => x.id===n.id ? { ...x, status:'sold', saleStatus:'pendente' } : x))
-      await loadPendingAndPaid(groupId, isAdmin, user.uid)
-      setCtx(null)
-    } else {
-      setMsg(data?.error || 'Falha ao marcar como aberto')
-    }
-  }
-
-  async function cancelSold(n: NumDoc) {
-    if (!user || !groupId) return
-    const token = await auth.currentUser?.getIdToken()
-    const res = await fetch('/api/sales/cancel', {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
-      body: JSON.stringify({ groupId, number: Number(n.id), saleId: n.saleId ?? null }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (res.ok && data?.ok) {
-      setNums(s => s.map(x => x.id===n.id ? { ...x, status:'available', saleStatus: undefined, saleId: null, vendorId:null, vendorName:null, clientName:null, total:null } : x))
-      await loadPendingAndPaid(groupId, isAdmin, user.uid)
-      setCtx(null)
-    } else {
-      setMsg(data?.error || 'Falha ao cancelar venda')
-    }
-  }
 
   async function onCreated() {
     if (!user || !groupId) return
@@ -513,7 +479,7 @@ export default function NumbersPage() {
                   onClick={() => setOpenCreate(true)}
                   className="mt-6 rounded-lg px-4 py-2 border border-border bg-surface hover:brightness-110 text-foreground text-sm"
                 >
-                  + Criar grupo (0..70)
+                  + Criar grupo<span className="hidden sm:inline"> (0..70)</span>
                 </button>
               </div>
             )}
@@ -642,7 +608,8 @@ export default function NumbersPage() {
                     aria-label={titleText.replace(/\n/g, '; ')}
                     onContextMenu={(e) => {
                       e.preventDefault()
-                      setCtx({ x: e.clientX, y: e.clientY, n })
+                      const paid = paidByNumber[n.id]
+                      setCtx({ open: true, x: e.clientX, y: e.clientY, num: n, saleId: paid?.saleId })
                     }}
                     disabled
                   >
@@ -653,22 +620,37 @@ export default function NumbersPage() {
             </div>
           )}
         </GlassCard>
-
-        {ctx && (
+        {ctx.open && (
           <div
-            className="fixed z-50 bg-surface border border-border rounded-md shadow-lg overflow-hidden"
+            className="fixed z-50 bg-surface border border-border rounded-md shadow-lg overflow-hidden text-sm"
             style={{ left: ctx.x, top: ctx.y, minWidth: 180 }}
-            onClick={(e)=> e.stopPropagation()}
+            onMouseLeave={() => setCtx(s => ({ ...s, open: false }))}
+            onClick={e => e.stopPropagation()}
           >
             <button
-              className="w-full text-left px-3 py-2 hover:bg-muted/20"
-              onClick={() => markPending(ctx.n)}
+              className="block w-full text-left px-3 py-2 hover:bg-muted/20"
+              onClick={async () => {
+                if (!ctx.num || !ctx.saleId || !groupId) return
+                const token = await auth.currentUser?.getIdToken()
+                await fetch('/api/sales/open', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                  body: JSON.stringify({ groupId, number: Number(ctx.num.id), saleId: ctx.saleId }),
+                })
+                setCtx(s => ({ ...s, open: false }))
+                await loadPendingAndPaid(groupId, isAdmin, user!.uid)
+                await loadNumbers(groupId)
+              }}
             >
               Marcar como em aberto
             </button>
             <button
-              className="w-full text-left px-3 py-2 hover:bg-muted/20 text-warning"
-              onClick={() => cancelSold(ctx.n)}
+              className="block w-full text-left px-3 py-2 hover:bg-muted/20"
+              onClick={async () => {
+                if (!ctx.num || !ctx.saleId) return
+                await cancelSale({ ...ctx.num, saleId: ctx.saleId })
+                setCtx(s => ({ ...s, open: false }))
+              }}
             >
               Cancelar venda
             </button>
@@ -739,7 +721,7 @@ function CreateGroupModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Criar grupo (0..70)">
+    <Modal open={open} onClose={onClose} title="Criar grupo">
       <div className="space-y-3" onMouseDown={(e) => e.stopPropagation()}>
         {isAdmin && (
           <div>

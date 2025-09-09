@@ -15,11 +15,14 @@ export async function GET(req: Request) {
     const isAdmin = (decoded as any).role === 'admin' || (decoded as any).admin === true
 
     const url = new URL(req.url)
-    const vendorFilter = isAdmin ? (url.searchParams.get('vendorId') || null) : uid
+    const vendorIdParam = url.searchParams.get('vendorId')
 
     let q: FirebaseFirestore.Query = adminDb.collection('groups')
-    // grupos gravam `createdBy` (ou `vendorId`) no create; usar `createdBy`
-    if (vendorFilter) q = q.where('createdBy', '==', vendorFilter)
+    if (!isAdmin) {
+      q = q.where('vendorId', '==', uid)
+    } else if (vendorIdParam) {
+      q = q.where('vendorId', '==', vendorIdParam)
+    }
 
     const snap = await q.get()
     const groups = snap.docs.map(d => ({
