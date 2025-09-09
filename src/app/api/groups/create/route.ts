@@ -40,7 +40,7 @@ export async function POST(req: Request) {
     const groupRef = adminDb.collection('groups').doc()
     await groupRef.set({
       vendorId: effectiveVendorId,
-      createdBy: uid,
+      createdBy: effectiveVendorId,
       createdAt: now,
       updatedAt: now,
       status: 'open',

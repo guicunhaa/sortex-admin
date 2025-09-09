@@ -28,7 +28,7 @@ type NumDoc = {
   canceled?: boolean
   // venda vinculada (opcional)
   saleId?: string | null
-  saleStatus?: 'pending' | 'confirmed' | 'canceled' | null
+  saleStatus?: 'pendente' | 'pago' | 'cancelado' | null
   clientName?: string | null
   vendorId?: string | null
   vendorName?: string | null
@@ -59,7 +59,13 @@ export default function NumbersPage() {
   const [vendors, setVendors] = useState<VendorOpt[]>([])
   // mapa: "00" -> { saleId, vendorId, clientName? }
   const [pendingByNumber, setPendingByNumber] = useState<Record<string, { saleId: string; vendorId: string; clientName?: string | null }>>({})
-  const [paidByNumber, setPaidByNumber] = useState<Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null }>>({})
+  const [paidByNumber, setPaidByNumber] = useState<Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null; saleId?: string | null }>>({})
+  const [contextMenu, setContextMenu] = useState<null | { x: number; y: number; number: NumDoc }>(null)
+  useEffect(() => {
+    const h = () => setContextMenu(null)
+    window.addEventListener('click', h)
+    return () => window.removeEventListener('click', h)
+  }, [])
 
   // tick de 1s para countdown — pausado com modais abertos para não roubar foco
   useEffect(() => {
@@ -189,7 +195,7 @@ export default function NumbersPage() {
       where('status', '==', 'pago'),
     )
     const gSnap = await getDocs(q2)
-    const paid: Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null }> = {}
+    const paid: Record<string, { clientName?: string | null; vendorName?: string | null; total?: number | null; saleId?: string | null }> = {}
     gSnap.forEach((d) => {
       const s = d.data() as any
       const n = String(s.number).padStart(2, '0')
@@ -197,6 +203,7 @@ export default function NumbersPage() {
         clientName: s.clientName ?? null,
         vendorName: s.vendorName ?? null,
         total: typeof s.total === 'number' ? s.total : null,
+        saleId: d.id,
       }
     })
 
@@ -343,7 +350,7 @@ export default function NumbersPage() {
 
       // sucesso: marca como vendido
       setNums((s) =>
-        s.map((x) => (x.id === n.id ? { ...x, status: 'sold', lock: undefined, canceled: false, saleStatus: 'confirmed' } : x))
+        s.map((x) => (x.id === n.id ? { ...x, status: 'sold', lock: undefined, canceled: false, saleStatus: 'pago' } : x))
       )
       await loadPendingAndPaid(groupId, isAdmin, user.uid)
       if (focus === n.id) {
@@ -383,7 +390,7 @@ export default function NumbersPage() {
       if (!res.ok || !data?.ok) throw new Error(data?.error || 'falha_cancelar_venda')
 
       // sucesso: libera o número
-      setNums((s) => s.map((x) => (x.id === n.id ? { ...x, status: 'available', lock: undefined, saleStatus: 'canceled' } : x)))
+      setNums((s) => s.map((x) => (x.id === n.id ? { ...x, status: 'available', lock: undefined, saleStatus: undefined } : x)))
       await loadPendingAndPaid(groupId, isAdmin, user.uid)
       if (focus === n.id) {
         setOpen(false)
@@ -397,11 +404,28 @@ export default function NumbersPage() {
     }
   }
 
+  async function markOpen(n: NumDoc) {
+    if (!user || !groupId) return
+    const token = await auth.currentUser?.getIdToken()
+    const res = await fetch('/api/sales/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ groupId, number: Number(n.id) }),
+    })
+    const ok = res.ok && (await res.json().catch(() => ({} as any))).ok
+    if (ok) {
+      setNums((s) => s.map((x) => (x.id === n.id ? { ...x, status: 'reserved', saleStatus: 'pendente' } : x)))
+      await loadPendingAndPaid(groupId, isAdmin, user.uid)
+    }
+    setContextMenu(null)
+  }
+
   async function onCreated() {
-    if (!focus || !user || !groupId) return
-    // venda é criada como 'pendente' — apenas fecha o modal e recarrega mapas para habilitar Confirmar/Cancelar
+    if (!user || !groupId) return
     setOpen(false)
     setFocus(null)
+    // recarrega números para refletir a venda recém-criada
+    await loadNumbers(groupId)
     await loadPendingAndPaid(groupId, isAdmin, user.uid)
   }
 
@@ -437,6 +461,7 @@ export default function NumbersPage() {
     availableCanceled: 'bg-warning/5 text-warning border border-warning/40 hover:brightness-110',
     reserved: 'bg-warning/10 text-warning border border-warning/30',
     sold: 'bg-success/10 text-success border border-success/30 cursor-default',
+    open: 'bg-primary/10 text-primary border border-primary/30', // pendente (azul)
   }
 
   return (
@@ -466,10 +491,12 @@ export default function NumbersPage() {
             {(isAdmin || canCreateGroups) && (
               <div className="shrink-0">
                 <button
+                  type="button"
                   onClick={() => setOpenCreate(true)}
-                  className="mt-6 rounded-lg px-4 py-2 border border-border bg-surface hover:brightness-110 text-foreground text-sm"
+                  className="mt-6 text-sm text-primary hover:underline"
+                  aria-label="Criar novo grupo com números 00 a 70"
                 >
-                  + Criar grupo (0..70)
+                  + Criar grupo
                 </button>
               </div>
             )}
@@ -503,8 +530,12 @@ export default function NumbersPage() {
                   : 0
                 const mm = String(Math.floor(left / 60)).padStart(2, '0')
                 const ss = String(left % 60).padStart(2, '0')
+                const mine = isMine(n)
+                const pendHit = pendingByNumber[n.id]
+                const showReserved =
+                  n.status === 'reserved' && (n.saleStatus === 'pendente' || (n.lock?.until && left > 0) || pendHit)
 
-                if (n.status === 'available') {
+                if (!showReserved && n.status !== 'sold') {
                   const cls = n.canceled ? palette.availableCanceled : palette.available
                   return (
                     <button
@@ -518,10 +549,7 @@ export default function NumbersPage() {
                     </button>
                   )
                 }
-                if (n.status === 'reserved') {
-                  const mine = isMine(n)
-                  // mostra ações somente se houver venda pendente mapeada para este número
-                  const pendHit = pendingByNumber[n.id]
+                if (showReserved) {
                   if (pendHit && (isAdmin || pendHit.vendorId === user?.uid || mine)) {
                     return (
                       <div
@@ -560,20 +588,25 @@ export default function NumbersPage() {
                     )
                   }
 
+                  const isOpen = n.saleStatus === 'pendente' && !n.lock?.until
                   return (
                     <button
                       key={n.id}
                       onClick={() => (mine ? resume(n.id) : undefined)}
                       disabled={!mine || !!busy[n.id]}
-                      className={`${
-                        palette.reserved
-                      } relative rounded-lg py-4 md:py-5 text-base md:text-lg font-medium transition ${mine ? '' : 'opacity-60 cursor-not-allowed'}`}
-                      aria-label={`Número ${n.id} reservado ${mine ? 'por você' : 'por outro vendedor'}`}
+                      className={`${isOpen ? palette.open : palette.reserved} relative rounded-lg py-4 md:py-5 text-base md:text-lg font-medium transition ${mine ? '' : 'opacity-60 cursor-not-allowed'}`}
+                      aria-label={
+                        isOpen
+                          ? `Número ${n.id} em aberto`
+                          : `Número ${n.id} reservado ${mine ? 'por você' : 'por outro vendedor'}`
+                      }
                     >
                       {n.id}
-                      <span className="ml-2 text-[10px] opacity-70" aria-live="polite">
-                        {mm}:{ss}
-                      </span>
+                      {!isOpen && (
+                        <span className="ml-2 text-[10px] opacity-70" aria-live="polite">
+                          {mm}:{ss}
+                        </span>
+                      )}
                     </button>
                   )
                 }
@@ -582,8 +615,9 @@ export default function NumbersPage() {
                 const soldClient = soldInfo?.clientName ?? n.clientName
                 const soldVendor = soldInfo?.vendorName ?? n.vendorName ?? null
                 const soldTotal = soldInfo?.total ?? n.total ?? null
+                const isOpen = n.saleStatus === 'pendente'
                 const titleText = [
-                  'Vendido',
+                  isOpen ? 'Em aberto' : 'Vendido',
                   soldTotal != null ? `Valor: ${fmtBRL(soldTotal)}` : null,
                   soldClient ? `Cliente: ${soldClient}` : null,
                   soldVendor ? `Vendedor: ${soldVendor}` : null,
@@ -591,9 +625,13 @@ export default function NumbersPage() {
                 return (
                   <button
                     key={n.id}
-                    className={`${palette.sold} relative rounded-lg py-4 md:py-5 text-base md:text-lg font-medium`}
+                    className={`${isOpen ? palette.open : palette.sold} relative rounded-lg py-4 md:py-5 text-base md:text-lg font-medium`}
                     title={titleText}
                     aria-label={titleText.replace(/\n/g, '; ')}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      setContextMenu({ x: e.clientX, y: e.clientY, number: n })
+                    }}
                     disabled
                   >
                     {n.id}
@@ -603,6 +641,27 @@ export default function NumbersPage() {
             </div>
           )}
         </GlassCard>
+        {contextMenu && (
+          <div
+            className="fixed z-50 bg-surface border border-border rounded-lg shadow-xl text-sm"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+            onMouseLeave={() => setContextMenu(null)}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="block w-full text-left px-3 py-2 hover:bg-muted/40"
+              onClick={() => cancelSale(contextMenu.number)}
+            >
+              Cancelar venda
+            </button>
+            <button
+              className="block w-full text-left px-3 py-2 hover:bg-muted/40"
+              onClick={() => markOpen(contextMenu.number)}
+            >
+              Marcar como “em aberto”
+            </button>
+          </div>
+        )}
 
         {/* Modal de venda */}
         <NewSaleModal
@@ -668,7 +727,7 @@ function CreateGroupModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Criar grupo (0..70)">
+    <Modal open={open} onClose={onClose} title="Criar grupo">
       <div className="space-y-3" onMouseDown={(e) => e.stopPropagation()}>
         {isAdmin && (
           <div>

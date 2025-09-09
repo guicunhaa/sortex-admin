@@ -16,8 +16,19 @@ import ThemeToggle from '@/components/ui/ThemeToggle'
 import { REGIONS } from '@/lib/regions'
 
 type Sale = {
-  id:string; vendorName:string; vendorId:string; region:string; groupId:string; groupName?:string; number:string;
-  quantity:number; total:number; status:'pago'|'pendente'; date:Date
+  id: string
+  vendorName: string
+  vendorId: string
+  region: string
+  groupId: string
+  groupName?: string
+  number: string
+  clientId?: string
+  clientName?: string
+  quantity: number
+  total: number
+  status: 'pago' | 'pendente'
+  date: Date
 }
 
 type Filters = { vendor?:string; region?:string; status?:'pago'|'pendente'|'' }
@@ -29,19 +40,21 @@ const CURRENCY=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'})
 const DATE=new Intl.DateTimeFormat('pt-BR')
 const SERIES=['#6366f1','#22d3ee','#a5b4fc','#06b6d4','#60a5fa','#34d399','#f472b6']
 
-function toSale(d:DocumentData):Sale{
+function toSale(d: DocumentData): Sale {
   return {
-    id:d.id,
-    vendorName:d.get('vendorName')??'',
-    vendorId:d.get('vendorId')??'',
-    region:d.get('region')??'',
-    groupId:d.get('groupId')??'',
-    groupName:d.get('groupName') ?? d.get('group_label') ?? d.get('groupLabel') ?? '',
-    number:String(d.get('number')??''),
-    quantity:Number(d.get('quantity')??0),
-    total:Number(d.get('total')??0),
-    status:d.get('status')??'pendente',
-    date:(d.get('date') as Timestamp)?.toDate()??new Date(0),
+    id: d.id,
+    vendorName: d.get('vendorName') ?? '',
+    vendorId: d.get('vendorId') ?? '',
+    region: d.get('region') ?? '',
+    groupId: d.get('groupId') ?? '',
+    groupName: d.get('groupName') ?? d.get('group_label') ?? d.get('groupLabel') ?? '',
+    number: String(d.get('number') ?? ''),
+    clientId: d.get('clientId') ?? '',
+    clientName: d.get('clientName') ?? '',
+    quantity: Number(d.get('quantity') ?? 0),
+    total: Number(d.get('total') ?? 0),
+    status: d.get('status') ?? 'pendente',
+    date: (d.get('date') as Timestamp)?.toDate() ?? new Date(0),
   }
 }
 
@@ -58,10 +71,10 @@ export default function DashboardPage(){
   const [loadingPage,setLoadingPage]=useState(false)
   const [refreshTick,setRefreshTick]=useState(0)
   const [openModal,setOpenModal]=useState(false)
-  const [showTotal,setShowTotal]=useState(true)
 
   const [vendors,setVendors]=useState<VendorOpt[]>([])
   const [groupNames, setGroupNames] = useState<Record<string,string>>({})
+  const [clientNames, setClientNames] = useState<Record<string,string>>({})
   useEffect(() => {
     const missing = Array.from(new Set(
       sales
@@ -84,6 +97,28 @@ export default function DashboardPage(){
       if (Object.keys(updates).length) setGroupNames(prev => ({ ...prev, ...updates }))
     })()
   }, [sales])
+
+  useEffect(() => {
+    ;(async () => {
+      const ids = Array.from(
+        new Set(
+          sales
+            .map(r => (r as any).clientId as string | undefined)
+            .filter(Boolean)
+            .filter(id => !clientNames[id!])
+        )
+      )
+      if (!ids.length) return
+      const snaps = await Promise.all(ids.map(id => getDoc(doc(db, 'clients', id!)).catch(() => null)))
+      const up: Record<string,string> = {}
+      snaps.forEach(s => { if (s?.exists()) up[s.id] = (s.data() as any).name ?? '' })
+      if (Object.keys(up).length) setClientNames(prev => ({ ...prev, ...up }))
+    })()
+  }, [sales])
+
+  function displayClient(r: any) {
+    return r.clientName || (r.clientId && clientNames[r.clientId]) || '—'
+  }
 
   // carregar opções de vendedores
   useEffect(()=>{(async()=>{
@@ -175,12 +210,16 @@ export default function DashboardPage(){
     return { totalRevenue, items, avgTicket }
   },[sales])
 
-  const lineData=useMemo(()=>{
-    const byDay=new Map<string,number>()
-    for(const s of sales){const k=DATE.format(s.date);byDay.set(k,(byDay.get(k)??0)+s.total)}
-    return Array.from(byDay,([date,total])=>({date,total}))
-      .sort((a,b)=>new Date(a.date).getTime()-new Date(b.date).getTime())
-  },[sales])
+  const lineData = useMemo(() => {
+    const byDay = new Map<string, number>()
+    for (const s of sales) {
+      const k = s.date.toISOString().slice(0, 10)
+      byDay.set(k, (byDay.get(k) ?? 0) + s.total)
+    }
+    return Array.from(byDay, ([date, value]) => ({ date, value })).sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+    )
+  }, [sales])
 
   const pieData=useMemo(()=>{
     const byVendor=new Map<string,number>()
@@ -280,24 +319,49 @@ export default function DashboardPage(){
           {/* CHARTS */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
             <GlassCard className="p-4 lg:col-span-2">
-              <div className="h-72 md:h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={lineData} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
-                    <defs>
-                      <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#6366f1" stopOpacity={0.8}/>
-                        <stop offset="100%" stopColor="#6366f1" stopOpacity={0.1}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid vertical={false} />
-                    <XAxis dataKey="date" stroke="currentColor" tick={{ fontSize: 12 }} />
-                    <YAxis stroke="currentColor" tickFormatter={(v)=>CURRENCY.format(v).replace('R$','R$ ')} />
-                    <Tooltip formatter={(v:number)=>CURRENCY.format(v)} />
-                    <Legend onClick={(e:any)=>{ if(e && e.dataKey==='total') setShowTotal(v=>!v) }} />
-                    <Line type="monotone" dataKey="total" name="Faturamento" stroke="#a5b4fc" strokeWidth={2} dot={false} activeDot={{r:4}} hide={!showTotal}/>
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={lineData} margin={{ top: 8, right: 24, bottom: 20, left: 8 }}>
+                  <CartesianGrid strokeOpacity={0.15} />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(d: Date | string | number) =>
+                      new Intl.DateTimeFormat('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                      }).format(new Date(d))
+                    }
+                    interval="preserveStartEnd"
+                    minTickGap={22}
+                    tickMargin={8}
+                  />
+                  <YAxis
+                    width={56}
+                    tickFormatter={(v: number) =>
+                      new Intl.NumberFormat('pt-BR', {
+                        style: 'currency',
+                        currency: 'BRL',
+                        maximumFractionDigits: 0,
+                      }).format(v)
+                    }
+                    allowDecimals={false}
+                    tickMargin={8}
+                  />
+                  <Tooltip
+                    formatter={(v: number) =>
+                      new Intl.NumberFormat('pt-BR', {
+                        style: 'currency',
+                        currency: 'BRL',
+                      }).format(v)
+                    }
+                    labelFormatter={(d) =>
+                      new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' }).format(
+                        new Date(d as any),
+                      )
+                    }
+                  />
+                  <Line type="monotone" dataKey="value" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
             </GlassCard>
 
             <GlassCard className="p-4">
@@ -328,7 +392,7 @@ export default function DashboardPage(){
                     <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Vendedor</th>
                     <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Número</th>
                     <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Grupo</th>
-                    <th scope="col" className="text-right font-medium text-muted px-4 py-3 border-b border-border">Qtd</th>
+                    <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Cliente</th>
                     <th scope="col" className="text-right font-medium text-muted px-4 py-3 border-b border-border">Total</th>
                     <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Região</th>
                     <th scope="col" className="text-left font-medium text-muted px-4 py-3 border-b border-border">Status</th>
@@ -353,7 +417,7 @@ export default function DashboardPage(){
                       <td className="px-4 py-3">{s.vendorName}</td>
                       <td className="px-4 py-3">{s.number}</td>
                       <td className="px-4 py-3">{s.groupName || (s.groupId && groupNames[s.groupId]) || s.groupId}</td>
-                      <td className="px-4 py-3 text-right">{s.quantity}</td>
+                      <td className="px-4 py-3">{displayClient(s)}</td>
                       <td className="px-4 py-3 text-right">{CURRENCY.format(s.total)}</td>
                       <td className="px-4 py-3">{s.region}</td>
                       <td className="px-4 py-3">

@@ -3,7 +3,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
-import admin, { adminAuth, adminDb } from '@/lib/firebaseAdmin'
+import admin, { adminAuth, adminDb, Field } from '@/lib/firebaseAdmin'
 import { padNumber, MIN_NUMBER, MAX_NUMBER } from '@/lib/groups'
 
 export async function POST(req: Request) {
@@ -27,6 +27,8 @@ export async function POST(req: Request) {
 
     const gid = String(gidRaw || '').trim()
     const number = padNumber(numRaw)
+    const numberPad = number
+    const numberInt = parseInt(number, 10)
     if (!gid) return NextResponse.json({ error: 'group_required' }, { status: 400 })
     if (Number(number) < MIN_NUMBER || Number(number) > MAX_NUMBER) {
       return NextResponse.json({ error: 'invalid_number' }, { status: 400 })
@@ -48,8 +50,19 @@ export async function POST(req: Request) {
         groupSnap.get('title') ??
         gid
 
-      // 2) (sua lógica existente de reserva/validação do número fica aqui)
-      //    Ex.: verificar disponibilidade, marcar como vendido, etc.
+      // 2) Atualiza documento do número conforme status
+      const numberRef = groupRef.collection('numbers').doc(number)
+      const numSnap = await tx.get(numberRef)
+      const numData = numSnap.data() as any
+
+      if (numData?.status === 'sold') throw new Error('number_sold')
+      if (
+        numData?.status === 'reserved' &&
+        numData?.lock?.by &&
+        numData.lock.by !== requesterUid
+      ) {
+        throw new Error('reserved_by_other')
+      }
 
       // 3) Gerar venda
       const salesRef = adminDb.collection('sales').doc()
@@ -62,10 +75,12 @@ export async function POST(req: Request) {
         {
           // Identificação do grupo
           groupId: gid,
-          groupName,                         // <<<<<<<<<<<<<< grava o NOME do grupo
+          groupName, // <<<<<<<<<<<<<< grava o NOME do grupo
 
           // Número/Venda
-          number,                            // string "00".."70" (padNumber)
+          number: numberPad, // string "00".."70" (padNumber)
+          numberPad,
+          numberInt,
           vendorId: requesterUid,
           vendorName,
           clientId,
@@ -86,8 +101,38 @@ export async function POST(req: Request) {
         { merge: true }
       )
 
-      // 4) (sua lógica existente de atualizar o grupo/números continua aqui)
-      //     tx.update(groupRef, {...})
+      if (status === 'pago') {
+        tx.set(
+          numberRef,
+          {
+            status: 'sold',
+            saleId: salesRef.id,
+            saleStatus: 'pago',
+            clientName,
+            vendorId: requesterUid,
+            vendorName,
+            total,
+            lock: Field.delete(),
+            updatedAt: now,
+          },
+          { merge: true },
+        )
+      } else {
+        tx.set(
+          numberRef,
+          {
+            status: 'reserved',
+            saleId: salesRef.id,
+            saleStatus: 'pendente',
+            clientName,
+            vendorId: requesterUid,
+            vendorName,
+            total,
+            updatedAt: now,
+          },
+          { merge: true },
+        )
+      }
 
       return { saleId: salesRef.id }
     })
