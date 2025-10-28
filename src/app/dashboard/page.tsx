@@ -7,13 +7,14 @@ import { useAuth } from '@/contexts/AuthContext'
 import GlassCard from '@/components/ui/GlassCard'
 import LogoutButton from '@/components/LogoutButton'
 import NewSaleModal from '@/components/dashboard/NewSaleModal'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, BarChart, Bar } from 'recharts'
 import Sidebar from '@/components/layout/Sidebar'
 import { useRole } from '@/hooks/useRole'
 import Label from '@/components/ui/form/Label'
 import Select from '@/components/ui/form/Select'
 import ThemeToggle from '@/components/ui/ThemeToggle'
 import { REGIONS } from '@/lib/regions'
+import { Award, CircleDollarSign, Filter as FilterIcon, ShieldCheck, Sparkles, Target, TrendingUp } from 'lucide-react'
 
 type Sale = {
   id:string; vendorName:string; vendorId:string; region:string; groupId:string; groupName?:string; number:string;
@@ -188,43 +189,137 @@ export default function DashboardPage(){
     return Array.from(byVendor,([name,total])=>({name,total})).sort((a,b)=>b.total-a.total).slice(0,6)
   },[sales])
 
+  const statusDistribution = useMemo(() => {
+    const base = new Map<string, number>([
+      ['pago', 0],
+      ['pendente', 0],
+    ])
+    for (const s of sales) {
+      base.set(s.status, (base.get(s.status) ?? 0) + 1)
+    }
+    return Array.from(base, ([name, value]) => ({ name, value }))
+  }, [sales])
+
+  const recentSales = useMemo(() => sales.slice(0, 6), [sales])
+
+  const topRegions = useMemo(() => {
+    const byRegion = new Map<string, { total: number; quantity: number }>()
+    for (const sale of sales) {
+      const current = byRegion.get(sale.region) ?? { total: 0, quantity: 0 }
+      current.total += sale.total
+      current.quantity += sale.quantity
+      byRegion.set(sale.region, current)
+    }
+    return Array.from(byRegion, ([region, stats]) => ({
+      region,
+      ...stats,
+      avgTicket: stats.quantity ? stats.total / stats.quantity : 0,
+    }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 4)
+  }, [sales])
+
+  const insights = useMemo(() => {
+    const entries: string[] = []
+    if (!sales.length) return entries
+    const bestVendor = pieData[0]
+    if (bestVendor) entries.push(`${bestVendor.name} lidera o faturamento com ${CURRENCY.format(bestVendor.total)}.`)
+    const bestRegion = topRegions[0]
+    if (bestRegion) entries.push(`A região ${bestRegion.region || 'não informada'} responde por ${CURRENCY.format(bestRegion.total)} e ticket médio de ${CURRENCY.format(bestRegion.avgTicket)}.`)
+    const paidRate = statusDistribution.reduce((acc, item) => acc + (item.name === 'pago' ? item.value : 0), 0) / (sales.length || 1)
+    entries.push(`Taxa de pagamentos em dia: ${(paidRate * 100).toFixed(1)}%.`)
+    return entries
+  }, [pieData, sales, statusDistribution, topRegions])
+
   // opções de região a partir do arquivo de regiões
   const regionOptions = (Array.isArray(REGIONS) ? REGIONS : []).map((r:any)=>({ value: r.code ?? r.value ?? r, label: r.label ?? r.name ?? String(r) }))
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.08)_0%,_rgba(15,23,42,0)_55%)]">
       <Sidebar />
       <div className="pt-14 md:pt-0 ml-0 md:ml-60 overflow-x-hidden">
         {/* HEADER */}
         <div className="sticky top-0 z-40">
-          <GlassCard className="mx-auto max-w-7xl mt-4 px-6 py-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-              <div className="min-w-0">
-                <h1 className="text-xl md:text-2xl font-semibold text-foreground text-glow">Dashboard de Vendas</h1>
-                <p className="text-sm text-muted truncate">Visão geral • filtros dinâmicos • UI glass</p>
-              </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
-                <div className="hidden md:flex">
-                  <ThemeToggle />
+          <GlassCard className="mx-auto max-w-7xl mt-4 px-6 py-5 shadow-2xl shadow-indigo-500/10">
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-6">
+                <div className="min-w-0">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted flex items-center gap-2">
+                    <Sparkles className="size-3" /> visão estratégica
+                  </p>
+                  <h1 className="text-2xl md:text-3xl font-semibold text-foreground text-glow leading-tight">Dashboard de Vendas</h1>
+                  <p className="text-sm text-muted mt-1 max-w-xl">Monitore os resultados do time, explore filtros avançados e identifique oportunidades de crescimento com uma visão moderna de analytics.</p>
                 </div>
-                <button
-                  onClick={()=>setOpenModal(true)}
-                  className="rounded-lg px-4 py-2 border border-border bg-surface hover:brightness-110 text-foreground text-sm transition whitespace-nowrap shrink-0 min-w-[120px]"
-                >
-                  + Nova venda
-                </button>
-                <LogoutButton />
+                <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap justify-end">
+                  <div className="hidden md:flex">
+                    <ThemeToggle />
+                  </div>
+                  <button
+                    onClick={()=>setOpenModal(true)}
+                    className="rounded-lg px-4 py-2.5 border border-transparent bg-gradient-to-r from-indigo-500 via-sky-500 to-cyan-400 text-white text-sm font-medium shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/40 whitespace-nowrap shrink-0 min-w-[140px]"
+                  >
+                    + Nova venda
+                  </button>
+                  <LogoutButton />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+                <div className="flex items-center gap-3 rounded-xl border border-border/40 bg-surface/60 px-4 py-3">
+                  <div className="flex size-10 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500/20 to-sky-500/20 text-indigo-400">
+                    <CircleDollarSign className="size-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-muted">Faturamento</p>
+                    <p className="text-base font-semibold text-foreground">{CURRENCY.format(kpis.totalRevenue)}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-xl border border-border/40 bg-surface/60 px-4 py-3">
+                  <div className="flex size-10 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500/20 to-teal-500/20 text-emerald-400">
+                    <TrendingUp className="size-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-muted">Ticket médio</p>
+                    <p className="text-base font-semibold text-foreground">{CURRENCY.format(kpis.avgTicket||0)}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-xl border border-border/40 bg-surface/60 px-4 py-3">
+                  <div className="flex size-10 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500/20 to-fuchsia-500/20 text-purple-400">
+                    <Target className="size-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-muted">Itens vendidos</p>
+                    <p className="text-base font-semibold text-foreground">{kpis.items}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-xl border border-border/40 bg-surface/60 px-4 py-3">
+                  <div className="flex size-10 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500/20 to-orange-500/20 text-amber-400">
+                    <ShieldCheck className="size-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-muted">Pagamentos em dia</p>
+                    <p className="text-base font-semibold text-foreground">{statusDistribution.length ? `${((statusDistribution.find(s=>s.name==='pago')?.value ?? 0) / (sales.length || 1) * 100).toFixed(1)}%` : '--'}</p>
+                  </div>
+                </div>
               </div>
             </div>
           </GlassCard>
         </div>
 
         {/* CONTAINER */}
-        <div className="mx-auto max-w-7xl px-4 md:px-6 py-6">
+        <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 space-y-6">
           {/* FILTER BAR (apenas para admin) */}
           {role === 'admin' && (
-            <GlassCard className="px-4 py-3">
-              <div className="flex flex-col md:flex-row md:items-end gap-3">
+            <GlassCard className="px-5 py-4 border border-indigo-500/10">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.25em] text-muted flex items-center gap-2">
+                    <FilterIcon className="size-3" /> filtros inteligentes
+                  </p>
+                  <h2 className="text-lg font-semibold text-foreground">Segmentação avançada</h2>
+                </div>
+                <div className="hidden sm:block text-xs text-muted">Aplique filtros combinados para refinar a análise e comparar times.</div>
+              </div>
+              <div className="flex flex-col md:flex-row md:items-end gap-4">
                 <div className="flex-1">
                   <Label>Vendedor</Label>
                   <Select value={filters.vendor??''}
@@ -258,65 +353,186 @@ export default function DashboardPage(){
             </GlassCard>
           )}
 
-          {/* KPIs */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-            <GlassCard className="p-5">
-              <div className="text-muted text-xs">Faturamento</div>
-              <div className="mt-2 text-2xl font-semibold">{CURRENCY.format(kpis.totalRevenue)}</div>
-              <div className="mt-1 text-[11px] text-muted">Soma do período filtrado</div>
-            </GlassCard>
-            <GlassCard className="p-5">
-              <div className="text-muted text-xs">Ticket médio</div>
-              <div className="mt-2 text-2xl font-semibold">{CURRENCY.format(kpis.avgTicket||0)}</div>
-              <div className="mt-1 text-[11px] text-muted">Média por venda</div>
-            </GlassCard>
-            <GlassCard className="p-5">
-              <div className="text-muted text-xs">Itens vendidos</div>
-              <div className="mt-2 text-2xl font-semibold">{kpis.items}</div>
-              <div className="mt-1 text-[11px] text-muted">Quantidade total</div>
-            </GlassCard>
-          </div>
-
-          {/* CHARTS */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
-            <GlassCard className="p-4 lg:col-span-2">
+          {/* CHARTS & INSIGHTS */}
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
+            <GlassCard className="p-4 lg:p-6">
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground">Faturamento diário</h2>
+                  <p className="text-xs text-muted">Performance temporal com curva suavizada e destaque por valor.</p>
+                </div>
+                <button
+                  onClick={()=>setShowTotal(v=>!v)}
+                  className="text-xs inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-muted hover:text-foreground transition"
+                >
+                  <TrendingUp className="size-3" /> {showTotal ? 'Ocultar' : 'Mostrar'} série
+                </button>
+              </div>
               <div className="h-72 md:h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={lineData} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                  <LineChart data={lineData} margin={{ top: 16, right: 24, bottom: 0, left: 0 }}>
                     <defs>
                       <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#6366f1" stopOpacity={0.8}/>
-                        <stop offset="100%" stopColor="#6366f1" stopOpacity={0.1}/>
+                        <stop offset="0%" stopColor="#6366f1" stopOpacity={0.9}/>
+                        <stop offset="100%" stopColor="#6366f1" stopOpacity={0.05}/>
                       </linearGradient>
                     </defs>
-                    <CartesianGrid vertical={false} />
-                    <XAxis dataKey="date" stroke="currentColor" tick={{ fontSize: 12 }} />
-                    <YAxis stroke="currentColor" tickFormatter={(v)=>CURRENCY.format(v).replace('R$','R$ ')} />
-                    <Tooltip formatter={(v:number)=>CURRENCY.format(v)} />
-                    <Legend onClick={(e:any)=>{ if(e && e.dataKey==='total') setShowTotal(v=>!v) }} />
-                    <Line type="monotone" dataKey="total" name="Faturamento" stroke="#a5b4fc" strokeWidth={2} dot={false} activeDot={{r:4}} hide={!showTotal}/>
+                    <CartesianGrid vertical={false} strokeDasharray="4 8" opacity={0.4} />
+                    <XAxis dataKey="date" stroke="currentColor" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
+                    <YAxis stroke="currentColor" tickFormatter={(v)=>CURRENCY.format(v).replace('R$','R$ ')} tickLine={false} axisLine={false} width={120} />
+                    <Tooltip formatter={(v:number)=>CURRENCY.format(v)} cursor={{ strokeDasharray: '3 3' }} />
+                    <Legend />
+                    <Line type="monotone" dataKey="total" name="Faturamento" stroke="#a5b4fc" strokeWidth={3} dot={{ r: 3 }} activeDot={{r:5}} fill="url(#grad)" fillOpacity={0.15} hide={!showTotal}/>
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             </GlassCard>
 
+            <div className="grid grid-cols-1 gap-4">
+              <GlassCard className="p-4">
+                <h2 className="text-lg font-semibold text-foreground">Status das vendas</h2>
+                <p className="text-xs text-muted mb-3">Distribuição entre pagamentos e pendências no período filtrado.</p>
+                <div className="h-60">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={statusDistribution}>
+                      <CartesianGrid vertical={false} strokeDasharray="4 8" opacity={0.2} />
+                      <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 12 }} />
+                      <YAxis allowDecimals={false} axisLine={false} tickLine={false} width={32} />
+                      <Tooltip formatter={(v:number)=>`${v} venda(s)`} />
+                      <Bar dataKey="value" radius={[8,8,4,4]}>
+                        {statusDistribution.map((item)=>(
+                          <Cell key={item.name} fill={item.name==='pago' ? '#34d399' : '#fbbf24'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </GlassCard>
+
+              <GlassCard className="p-4">
+                <h2 className="text-lg font-semibold text-foreground">Insights rápidos</h2>
+                <p className="text-xs text-muted mb-4">Contexto gerado a partir dos indicadores atuais.</p>
+                <ul className="space-y-3 text-sm">
+                  {insights.length ? insights.map((text, index) => (
+                    <li key={index} className="flex items-start gap-3">
+                      <Award className="size-4 mt-0.5 text-indigo-400" />
+                      <span className="text-foreground/90 leading-relaxed">{text}</span>
+                    </li>
+                  )) : (
+                    <li className="text-muted">Nenhum insight disponível com os dados atuais.</li>
+                  )}
+                </ul>
+              </GlassCard>
+            </div>
+          </div>
+
+          {/* DISTRIBUTIONS */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <GlassCard className="p-4">
+              <h2 className="text-lg font-semibold text-foreground">Ranking de vendedores</h2>
+              <p className="text-xs text-muted mb-4">Top 6 por faturamento. Combine com filtros para análises específicas.</p>
+              <div className="space-y-3">
+                {pieData.length ? pieData.map((item, index) => (
+                  <div key={item.name} className="flex items-center gap-3 rounded-lg border border-border/50 bg-surface/50 px-4 py-3">
+                    <div className="flex size-10 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/20 to-sky-500/20 text-sm font-semibold text-indigo-300">
+                      #{index+1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">{item.name}</p>
+                      <p className="text-xs text-muted">{CURRENCY.format(item.total)}</p>
+                    </div>
+                    <span className="text-xs text-muted">{((item.total / (kpis.totalRevenue || 1)) * 100).toFixed(1)}%</span>
+                  </div>
+                )) : (
+                  <div className="text-sm text-muted">Sem dados disponíveis para o ranking.</div>
+                )}
+              </div>
+            </GlassCard>
+
+            <GlassCard className="p-4">
+              <h2 className="text-lg font-semibold text-foreground">Desempenho por região</h2>
+              <p className="text-xs text-muted mb-4">Identifique territórios quentes e ajuste esforços comerciais.</p>
+              <div className="space-y-3">
+                {topRegions.length ? topRegions.map(region => (
+                  <div key={region.region} className="flex flex-col gap-1 rounded-lg border border-border/40 bg-surface/50 px-4 py-3">
+                    <div className="flex items-center justify-between text-sm font-medium text-foreground">
+                      <span>{region.region || 'Não informado'}</span>
+                      <span>{CURRENCY.format(region.total)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-muted">
+                      <span>{region.quantity} itens</span>
+                      <span>Ticket médio: {CURRENCY.format(region.avgTicket)}</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-border/60 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-indigo-500 via-sky-500 to-cyan-400"
+                        style={{ width: `${Math.min(100, (region.total / (topRegions[0]?.total || 1)) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )) : (
+                  <div className="text-sm text-muted">Sem dados suficientes para analisar regiões.</div>
+                )}
+              </div>
+            </GlassCard>
+          </div>
+
+          {/* CHART PIE + TIMELINE */}
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-4">
+            <GlassCard className="p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground">Participação por vendedor</h2>
+                  <p className="text-xs text-muted">Percentual de contribuição para o faturamento total.</p>
+                </div>
+                <div className="text-xs text-muted">Top {pieData.length || 0}</div>
+              </div>
               <div className="h-72 md:h-80">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={pieData} dataKey="total" nameKey="name" innerRadius={50} outerRadius={80} paddingAngle={3}>
+                    <Pie data={pieData} dataKey="total" nameKey="name" innerRadius={60} outerRadius={92} paddingAngle={4} stroke="transparent">
                       {pieData.map((_,i)=>(<Cell key={i} fill={SERIES[i%SERIES.length]}/>))}
                     </Pie>
-                    <Legend/>
+                    <Legend verticalAlign="bottom" height={36} />
                     <Tooltip formatter={(v:number)=>CURRENCY.format(v)} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
             </GlassCard>
+
+            <GlassCard className="p-4">
+              <h2 className="text-lg font-semibold text-foreground">Últimas movimentações</h2>
+              <p className="text-xs text-muted mb-4">Registro cronológico das vendas mais recentes.</p>
+              <div className="space-y-4">
+                {recentSales.length ? recentSales.map(item => (
+                  <div key={item.id} className="flex items-start gap-3">
+                    <div className="relative mt-1">
+                      <div className="size-2 rounded-full bg-gradient-to-br from-indigo-500 to-sky-500" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between text-sm font-medium text-foreground">
+                        <span>{item.vendorName || 'Vendedor sem nome'}</span>
+                        <span>{CURRENCY.format(item.total)}</span>
+                      </div>
+                      <div className="text-xs text-muted flex flex-wrap items-center gap-2">
+                        <span>#{item.number}</span>
+                        <span className="inline-flex items-center gap-1 text-emerald-400">
+                          <TrendingUp className="size-3" /> {item.quantity} itens
+                        </span>
+                        <span>{item.region || 'Sem região'}</span>
+                        <span>{DATE.format(item.date)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )) : (
+                  <div className="text-sm text-muted">Nenhuma movimentação encontrada.</div>
+                )}
+              </div>
+            </GlassCard>
           </div>
 
           {/* TABLE */}
-          <GlassCard className="mt-4 overflow-hidden">
+          <GlassCard className="overflow-hidden">
             <div className="px-4 py-3 text-muted text-sm">Vendas</div>
             <div className="divider"/>
             <div className="overflow-auto" aria-busy={loadingPage}>
